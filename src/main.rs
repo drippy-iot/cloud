@@ -13,9 +13,15 @@ fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_io().build()?;
     rt.block_on(async {
         let tcp = tokio::net::TcpListener::from_std(tcp)?;
+        let mut stop = core::pin::pin!(tokio::signal::ctrl_c());
 
         loop {
-            let (stream, other) = match tcp.accept().await {
+            let res = tokio::select! {
+                accept_res = tcp.accept() => accept_res,
+                stop_res = &mut stop => break stop_res,
+            };
+
+            let (stream, other) = match res {
                 Ok(pair) => pair,
                 Err(err) => {
                     log::error!("{err:?}");
@@ -26,9 +32,11 @@ fn main() -> anyhow::Result<()> {
             log::info!("new connection from {other}");
 
             use core::{convert::Infallible, future::ready};
-            use hyper::Response;
-            let svc = hyper::service::service_fn(|_| ready(Ok::<_, Infallible>(Response::new(String::new()))));
+            let svc = hyper::service::service_fn(|_| ready(Ok::<_, Infallible>(hyper::Response::new(String::new()))));
             rt.spawn(http.serve_connection(stream, svc));
         }
-    })
+    })?;
+
+    log::warn!("stop signal received");
+    Ok(())
 }

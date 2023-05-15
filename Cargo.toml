@@ -10,6 +10,7 @@ log = "0.4"
 [dependencies.env_logger]
 version = "0.10"
 default-features = false
+features = ["color"]
 
 [dependencies.hyper]
 version = "1.0.0-rc.3"
@@ -18,5 +19,5 @@ default-features = false
 
 [dependencies.tokio]
 version = "1.28.1"
-features = ["net", "parking_lot", "rt-multi-thread"]
+features = ["macros", "net", "parking_lot", "rt-multi-thread", "signal"]
 default-features = false
