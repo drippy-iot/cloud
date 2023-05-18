@@ -10,10 +10,23 @@ async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, Sta
     let Message { data, .. } = decode(&bytes).unwrap();
     match method {
         Method::POST => match (uri.path(), data) {
-            ("/leak", Payload::Conflict) | ("/report", Payload::Flow { .. }) => Ok(Response::new(Empty::new())),
-            _ => Err(StatusCode::NOT_FOUND),
+            ("/leak", Payload::Conflict) => {
+                log::warn!("leak detected");
+                Ok(Response::new(Empty::new()))
+            }
+            ("/report", Payload::Flow { ticks }) => {
+                log::info!("reported {ticks} ticks for this interval");
+                Ok(Response::new(Empty::new()))
+            }
+            (path, data) => {
+                log::error!("unexpected {data:?} to POST {path}");
+                Err(StatusCode::NOT_FOUND)
+            }
         },
-        _ => Err(StatusCode::METHOD_NOT_ALLOWED),
+        method => {
+            log::error!("unexpected {method} method received");
+            Err(StatusCode::METHOD_NOT_ALLOWED)
+        }
     }
 }
 
