@@ -33,7 +33,7 @@ fn main() -> anyhow::Result<()> {
 
             log::info!("new connection from {other}");
 
-            let svc = hyper::service::service_fn(router::handle_http);
+            let svc = hyper::service::service_fn(router::handle);
             rt.spawn(http.serve_connection(stream, svc));
         }
     })?;

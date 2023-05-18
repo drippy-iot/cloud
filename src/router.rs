@@ -5,9 +5,7 @@ use hyper::{Request, Response};
 use http_body_util::{Empty, Full};
 use hyper::body::Bytes;
 
-use model::{Message, Payload, decode};
-
-pub async fn handle_http(
+pub async fn handle(
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     match (req.method(), req.uri().path()) {
