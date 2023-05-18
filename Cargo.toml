@@ -6,6 +6,10 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 log = "0.4"
+http-body-util = "0.1.0-rc.2" 
+model = { git = "https://github.com/drippy-iot/model.git" }
+bitcode = "0.4"
+
 
 [dependencies.env_logger]
 version = "0.10"
