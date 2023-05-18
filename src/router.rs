@@ -1,52 +1,26 @@
-use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
-use hyper::{body::Bytes, http::request::Parts, Method, Request, Response};
+use core::future::Future;
+use futures_util::TryFutureExt;
+use http_body_util::{BodyExt, Empty};
+use hyper::{body::Incoming, http::request::Parts, Method, Request, Response, StatusCode};
 use model::{decode, Message, Payload};
 
-pub async fn handle(
-    req: Request<hyper::body::Incoming>,
-) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, StatusCode> {
     let (Parts { uri, method, .. }, incoming) = req.into_parts();
-    match (method, uri.path()) {
-        (Method::POST, "/leak") => {
-            let x: Bytes = incoming.collect().await?.to_bytes();
-            let y: Message = decode(&x).unwrap();
-
-            let mac = y.head.mac;
-            let timestamp = y.head.timestamp;
-            let payload = y.data;
-
-            log::info!("({}) mac: {}\t timestap: {}", "/leak", format!("{mac:#?}"), format!("{timestamp:#?}"));
-
-            match payload {
-                Payload::Conflict => Ok(Response::new(full("Success"))),
-                _ => Ok(Response::new(full("Error"))),
-            }
-        }
-        (Method::POST, "/report") => {
-            let x: Bytes = incoming.collect().await?.to_bytes();
-            let y: Message = decode(&x).unwrap();
-
-            let mac = y.head.mac;
-            let timestamp = y.head.timestamp;
-            let payload = y.data;
-
-            log::info!("({}) mac: {}\t timestap: {}", "/report", format!("{mac:#?}"), format!("{timestamp:#?}"));
-
-            match payload {
-                Payload::Flow { ticks: _ } => Ok(Response::new(full("Success"))),
-                _ => Ok(Response::new(full("Error"))),
-            }
-        }
-        _ => Ok(Response::new(empty())),
+    let bytes = incoming.collect().await.unwrap().to_bytes();
+    let Message { data, .. } = decode(&bytes).unwrap();
+    match method {
+        Method::POST => match (uri.path(), data) {
+            ("/leak", Payload::Conflict) | ("/report", Payload::Flow { .. }) => Ok(Response::new(Empty::new())),
+            _ => Err(StatusCode::NOT_FOUND),
+        },
+        _ => Err(StatusCode::METHOD_NOT_ALLOWED),
     }
 }
 
-// We create some utility functions to make Empty and Full bodies
-// fit our broadened Response body type.
-fn empty() -> BoxBody<Bytes, hyper::Error> {
-    Empty::<Bytes>::new().map_err(|never| match never {}).boxed()
-}
-
-fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
-    Full::new(chunk.into()).map_err(|never| match never {}).boxed()
+pub fn handle<D>(req: Request<Incoming>) -> impl Future<Output = Response<Empty<D>>> {
+    try_handle(req).unwrap_or_else(|code| {
+        let mut res = Response::new(Empty::new());
+        *res.status_mut() = code;
+        res
+    })
 }

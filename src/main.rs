@@ -1,3 +1,7 @@
+use core::convert::Infallible;
+use futures_util::FutureExt;
+use hyper::body::Bytes;
+
 mod router;
 
 fn main() -> anyhow::Result<()> {
@@ -33,7 +37,7 @@ fn main() -> anyhow::Result<()> {
 
             log::info!("new connection from {other}");
 
-            let svc = hyper::service::service_fn(router::handle);
+            let svc = hyper::service::service_fn(|req| router::handle::<Bytes>(req).map(Ok::<_, Infallible>));
             rt.spawn(http.serve_connection(stream, svc));
         }
     })?;
