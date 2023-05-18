@@ -6,8 +6,20 @@ use model::{decode, Message, Payload};
 
 async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, StatusCode> {
     let (Parts { uri, method, .. }, incoming) = req.into_parts();
-    let bytes = incoming.collect().await.unwrap().to_bytes();
-    let Message { data, .. } = decode(&bytes).unwrap();
+
+    let bytes = match incoming.collect().await {
+        Ok(body) => body.to_bytes(),
+        Err(err) => {
+            log::error!("{err}");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let Ok(Message { data, .. }) = decode(&bytes) else {
+        log::error!("user provided bad input");
+        return Err(StatusCode::BAD_REQUEST);
+    };
+
     match method {
         Method::POST => match (uri.path(), data) {
             ("/leak", Payload::Conflict) => {
