@@ -1,3 +1,9 @@
+use core::convert::Infallible;
+use futures_util::FutureExt;
+use hyper::body::Bytes;
+
+mod router;
+
 fn main() -> anyhow::Result<()> {
     use std::net::{Ipv4Addr, TcpListener};
     let port: u16 = std::env::var("PORT")?.parse()?;
@@ -31,8 +37,7 @@ fn main() -> anyhow::Result<()> {
 
             log::info!("new connection from {other}");
 
-            use core::{convert::Infallible, future::ready};
-            let svc = hyper::service::service_fn(|_| ready(Ok::<_, Infallible>(hyper::Response::new(String::new()))));
+            let svc = hyper::service::service_fn(|req| router::handle::<Bytes>(req).map(Ok::<_, Infallible>));
             rt.spawn(http.serve_connection(stream, svc));
         }
     })?;
