@@ -69,6 +69,7 @@ dependencies = [
  "anyhow",
  "bitcode",
  "env_logger",
+ "futures-util",
  "http-body-util",
  "hyper",
  "log",

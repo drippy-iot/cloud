@@ -14,6 +14,10 @@ version = "0.10"
 default-features = false
 features = ["color"]
 
+[dependencies.futures-util]
+version = "0.3"
+default-features = false
+
 [dependencies.hyper]
 version = "1.0.0-rc.3"
 features = ["http1", "server"]
