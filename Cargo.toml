@@ -5,13 +5,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
-log = "0.4"
-http-body-util = "0.1.0-rc.2" 
 bitcode = "0.4"
-
-[dependencies.model]
-git = "https://github.com/drippy-iot/model.git" 
-rev = "9840487"
+http-body-util = "0.1.0-rc.2" 
+log = "0.4"
 
 [dependencies.env_logger]
 version = "0.10"
@@ -22,6 +18,10 @@ features = ["color"]
 version = "1.0.0-rc.3"
 features = ["http1", "server"]
 default-features = false
+
+[dependencies.model]
+git = "https://github.com/drippy-iot/model.git" 
+rev = "9840487"
 
 [dependencies.tokio]
 version = "1.28.1"
