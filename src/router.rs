@@ -1,16 +1,14 @@
-use http_body_util::{combinators::BoxBody, BodyExt};
-use hyper::Method;
-use hyper::{Request, Response};
-
-use http_body_util::{Empty, Full};
-use hyper::body::Bytes;
+use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
+use hyper::{body::Bytes, http::request::Parts, Method, Request, Response};
+use model::{decode, Message, Payload};
 
 pub async fn handle(
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-    match (req.method(), req.uri().path()) {
-        (&Method::POST, "/leak") => {
-            let x: Bytes = req.collect().await?.to_bytes();
+    let (Parts { uri, method, .. }, incoming) = req.into_parts();
+    match (method, uri.path()) {
+        (Method::POST, "/leak") => {
+            let x: Bytes = incoming.collect().await?.to_bytes();
             let y: Message = decode(&x).unwrap();
 
             let mac = y.head.mac;
@@ -24,8 +22,8 @@ pub async fn handle(
                 _ => Ok(Response::new(full("Error"))),
             }
         }
-        (&Method::POST, "/report") => {
-            let x: Bytes = req.collect().await?.to_bytes();
+        (Method::POST, "/report") => {
+            let x: Bytes = incoming.collect().await?.to_bytes();
             let y: Message = decode(&x).unwrap();
 
             let mac = y.head.mac;
