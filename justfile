@@ -21,7 +21,6 @@ drop:
 # Completely delete the entire `/data` folder.
 nuke:
     @rm -r data
-    just initdb
 
 # Create the `/data` folder and start the database daemon in one step.
 init: initdb && db
