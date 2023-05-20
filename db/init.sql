@@ -13,7 +13,7 @@ CREATE TABLE status(
     PRIMARY KEY (mac, creation),
     CONSTRAINT "FK_status.mac"
         FOREIGN KEY (mac)
-        REFERENCES user (mac)
+        REFERENCES unit (mac)
 );
 
 CREATE TABLE leak(
