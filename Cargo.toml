@@ -8,6 +8,9 @@ anyhow = "1"
 bitcode = "0.4"
 http-body-util = "0.1.0-rc.2" 
 log = "0.4"
+native-tls = "0.2"
+postgres-native-tls = "0.5"
+tokio-postgres = "0.7"
 
 [dependencies.env_logger]
 version = "0.10"
