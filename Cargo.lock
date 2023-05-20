@@ -537,7 +537,7 @@ dependencies = [
 [[package]]
 name = "model"
 version = "0.1.0"
-source = "git+https://github.com/drippy-iot/model.git#6da89a93aed083ef3a4bc60e8b1a9ed78c48089b"
+source = "git+https://github.com/drippy-iot/model.git#2a74d2c5438c90546ac15db76c3fa1b93299c12b"
 dependencies = [
  "bitcode",
 ]

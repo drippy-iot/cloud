@@ -2,10 +2,7 @@ use core::future::Future;
 use futures_util::TryFutureExt;
 use http_body_util::{BodyExt, Empty};
 use hyper::{body::Incoming, http::request::Parts, Method, Request, Response, StatusCode};
-use model::{
-    decode,
-    report::{Flow, Ping},
-};
+use model::{decode, report::Flow, MacAddress};
 
 async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, StatusCode> {
     let (Parts { uri, method, .. }, incoming) = req.into_parts();
@@ -20,12 +17,12 @@ async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, Sta
     match method {
         Method::POST => match uri.path() {
             "/report/flow" => {
-                let Ok(Flow { head, flow }) = decode(&bytes) else {
+                let Ok(Flow { addr, flow }) = decode(&bytes) else {
                     log::error!("malformed water flow reported");
                     return Err(StatusCode::BAD_REQUEST);
                 };
 
-                log::info!("{head} reported {flow} ticks for this interval");
+                log::info!("{addr} reported {flow} ticks for this interval");
 
                 // TODO: Send to the database
 
@@ -34,7 +31,7 @@ async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, Sta
                 Ok(res)
             }
             "/report/leak" => {
-                let Ok(ping) = decode::<Ping>(&bytes) else {
+                let Ok(ping) = decode::<MacAddress>(&bytes) else {
                     log::error!("malformed leak reported");
                     return Err(StatusCode::BAD_REQUEST);
                 };
