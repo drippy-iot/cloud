@@ -17,15 +17,21 @@ async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, Sta
 
     match method {
         Method::POST => match uri.path() {
-            "/report/leak" => {
-                let ping: Ping = decode(&bytes).unwrap();
-                log::warn!("leak detected from {ping}");
-                Ok(Response::new(Empty::new()))
-            }
             "/report/flow" => {
                 let Flow { head, flow } = decode(&bytes).unwrap();
                 log::info!("{head} reported {flow} ticks for this interval");
-                Ok(Response::new(Empty::new()))
+
+                let mut res = Response::new(Empty::new());
+                *res.status_mut() = StatusCode::CREATED;
+                Ok(res)
+            }
+            "/report/leak" => {
+                let ping: Ping = decode(&bytes).unwrap();
+                log::warn!("leak detected from {ping}");
+
+                let mut res = Response::new(Empty::new());
+                *res.status_mut() = StatusCode::CREATED;
+                Ok(res)
             }
             path => {
                 log::error!("unexpected request to POST {path}");
