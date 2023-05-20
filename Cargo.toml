@@ -25,7 +25,8 @@ default-features = false
 
 [dependencies.model]
 git = "https://github.com/drippy-iot/model.git" 
-rev = "1477e2e"
+features = ["report"]
+default-features = false
 
 [dependencies.tokio]
 version = "1.28.1"

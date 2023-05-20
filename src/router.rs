@@ -2,7 +2,7 @@ use core::future::Future;
 use futures_util::TryFutureExt;
 use http_body_util::{BodyExt, Empty};
 use hyper::{body::Incoming, http::request::Parts, Method, Request, Response, StatusCode};
-use model::{decode, Message, Payload};
+use model::{decode, report::{Flow, Ping}};
 
 async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, StatusCode> {
     let (Parts { uri, method, .. }, incoming) = req.into_parts();
@@ -15,23 +15,20 @@ async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, Sta
         }
     };
 
-    let Ok(Message { data, .. }) = decode(&bytes) else {
-        log::error!("user provided bad input");
-        return Err(StatusCode::BAD_REQUEST);
-    };
-
     match method {
-        Method::POST => match (uri.path(), data) {
-            ("/leak", Payload::Conflict) => {
-                log::warn!("leak detected");
+        Method::POST => match uri.path() {
+            "/report/leak" => {
+                let ping: Ping = decode(&bytes).unwrap();
+                log::warn!("leak detected from {ping}");
                 Ok(Response::new(Empty::new()))
             }
-            ("/report", Payload::Flow { ticks }) => {
-                log::info!("reported {ticks} ticks for this interval");
+            "/report/flow" => {
+                let Flow { head, flow } = decode(&bytes).unwrap();
+                log::info!("{head} reported {flow} ticks for this interval");
                 Ok(Response::new(Empty::new()))
             }
-            (path, data) => {
-                log::error!("unexpected {data:?} to POST {path}");
+            path => {
+                log::error!("unexpected request to POST {path}");
                 Err(StatusCode::NOT_FOUND)
             }
         },
