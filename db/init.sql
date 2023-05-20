@@ -45,8 +45,8 @@ CREATE TABLE sms(
         REFERENCES unit (mac)
 );
 
-CREATE TABLE session (
-    id UUID NOT NULL,
+CREATE TABLE session(
+    id UUID NOT NULL DEFAULT gen_random_uuid(),
     mac MACADDR NOT NULL,
     PRIMARY KEY (id),
     CONSTRAINT "FK_session.mac"
