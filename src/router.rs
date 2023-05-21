@@ -1,6 +1,7 @@
 use crate::database::Database;
 
 use alloc::sync::Arc;
+use cookie::Cookie;
 use core::future::Future;
 use futures_util::TryFutureExt;
 use http_body_util::{BodyExt, Empty};
@@ -19,6 +20,28 @@ async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Resp
 
     match method {
         Method::POST => match uri.path() {
+            "/api/shutdown" => {
+                let text = core::str::from_utf8(&bytes).unwrap();
+                let Some(sid) = Cookie::split_parse(text).find_map(|cookie| {
+                    let c = cookie.ok()?;
+                    if c.name() == "sid" {
+                        let uuid = uuid::Uuid::parse_str(c.value()).ok()?;
+                        Some(uuid)
+                    } else {
+                        None
+                    }
+                }) else {
+                    return Err(StatusCode::UNAUTHORIZED);
+                };
+
+                let Some((mac, _)) = db.get_unit_from_session(sid).await else {
+                    return Err(StatusCode::UNAUTHORIZED);
+                };
+
+                let mut res = Response::new(Empty::new());
+                *res.status_mut() = if db.request_shutdown(mac).await { StatusCode::ACCEPTED } else { StatusCode::OK };
+                Ok(res)
+            }
             "/report/flow" => {
                 let Ok(flow) = decode::<Flow>(&bytes) else {
                     log::error!("malformed water flow reported");
