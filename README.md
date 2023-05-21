@@ -33,6 +33,12 @@ just create
 ```
 
 ```bash
+# Connect to the database using a `psql` shell.
+just shell
+```
+
+
+```bash
 # Drop the instantiated database and recreate a new one from the template.
 just respawn
 
