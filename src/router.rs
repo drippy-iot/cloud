@@ -40,14 +40,18 @@ async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Respons
         Method::GET => match uri.path() {
             "/auth/session" => {
                 let Some(sid) = extract_session_id(&headers) else {
+                    log::error!("absent session");
                     return Err(StatusCode::UNAUTHORIZED);
                 };
 
-                let Some((MacAddress(mac), shutdown)) = db.get_unit_from_session(sid).await else {
-                    return Err(StatusCode::NOT_FOUND);
+                let Some((mac, shutdown)) = db.get_unit_from_session(sid).await else {
+                    log::error!("invalid session {sid}");
+                    return Err(StatusCode::UNAUTHORIZED);
                 };
 
-                let bytes = alloc::boxed::Box::<[_]>::from(mac);
+                log::info!("session {sid} retrieved session details for unit {mac} [{shutdown}]");
+
+                let bytes = alloc::boxed::Box::<[_]>::from(mac.0);
                 let body = Full::new(Bytes::from(bytes));
 
                 let mut res = Response::new(body);
@@ -55,37 +59,44 @@ async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Respons
                 Ok(res)
             }
             path => {
-                log::warn!("unexpected request to GET {path}");
+                log::error!("unexpected request to GET {path}");
                 Err(StatusCode::NOT_FOUND)
             }
         },
         Method::POST => match uri.path() {
             "/api/shutdown" => {
                 let Some(sid) = extract_session_id(&headers) else {
+                    log::error!("absent session");
                     return Err(StatusCode::UNAUTHORIZED);
                 };
 
                 let Some((mac, _)) = db.get_unit_from_session(sid).await else {
+                    log::error!("invalid session {sid}");
                     return Err(StatusCode::UNAUTHORIZED);
                 };
 
                 let mut res = Response::default();
                 *res.status_mut() = if db.request_shutdown(mac).await { StatusCode::ACCEPTED } else { StatusCode::OK };
+                log::info!("session {sid} requested shutdown of unit {mac}");
                 Ok(res)
             }
             "/auth/session" => {
                 if bytes.len() < 6 {
+                    log::error!("provided a MAC address that is too short");
                     return Err(StatusCode::BAD_REQUEST);
                 }
 
-                let mut mac = [0; 6];
-                mac.copy_from_slice(&bytes[..6]);
+                let mut mac = MacAddress([0; 6]);
+                mac.0.copy_from_slice(&bytes[..6]);
 
-                let Some(uuid) = db.create_session(MacAddress(mac)).await else {
+                let Some(uuid) = db.create_session(mac).await else {
+                    log::error!("cannot create session because unit {mac} does not exist yet");
                     return Err(StatusCode::NOT_FOUND);
                 };
 
                 let fmt = uuid.simple();
+                log::info!("created new session {fmt} for unit {mac}");
+
                 let cookie = alloc::format!("sid={fmt}; HttpOnly; SameSite=None; Secure");
                 let cookie = HeaderValue::from_str(&cookie).unwrap();
 
@@ -100,7 +111,8 @@ async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Respons
                     return Err(StatusCode::BAD_REQUEST);
                 };
 
-                log::info!("{} reported {} ticks for this interval", flow.addr, flow.flow);
+                let Flow { addr, flow: data } = flow;
+                log::info!("unit {addr} reported {data} ticks");
 
                 let mut res = Response::default();
                 *res.status_mut() =
@@ -121,12 +133,12 @@ async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Respons
                 Ok(res)
             }
             path => {
-                log::warn!("unexpected request to POST {path}");
+                log::error!("unexpected request to POST {path}");
                 Err(StatusCode::NOT_FOUND)
             }
         },
         method => {
-            log::warn!("unexpected {method} method received");
+            log::error!("unexpected {method} method received");
             Err(StatusCode::METHOD_NOT_ALLOWED)
         }
     }
