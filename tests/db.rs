@@ -32,8 +32,10 @@ async fn database_tests() -> anyhow::Result<()> {
     assert!(!db.report_leak(mac).await);
 
     let id = db.create_session(mac).await.unwrap();
-    assert!(db.is_valid_session(id).await);
-    assert!(!db.is_valid_session(Uuid::nil()).await);
+    let (other_mac, shutdown) = db.get_unit_from_session(id).await.unwrap();
+    assert_eq!(mac, other_mac);
+    assert!(!shutdown);
+    assert!(db.get_unit_from_session(Uuid::nil()).await.is_none());
 
     drop(db);
     handle.await??;

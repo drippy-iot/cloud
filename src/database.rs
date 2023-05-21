@@ -70,8 +70,17 @@ impl Database {
         None
     }
 
-    pub async fn is_valid_session(&self, id: Uuid) -> bool {
-        let row = self.db.query_one("SELECT EXISTS(SELECT 1 FROM session WHERE id = $1)", &[&id]).await.unwrap();
-        row.get(0)
+    /// Checks for the existence of a session. Returns the associated MAC address and
+    /// its latest shutdown request state. If no such sessions exist, we return [`None`].
+    pub async fn get_unit_from_session(&self, sid: Uuid) -> Option<(MacAddress, bool)> {
+        let row = self
+            .db
+            .query_opt("SELECT mac, shutdown FROM session s INNER JOIN unit u USING (mac) WHERE id = $1 LIMIT 1", &[&sid])
+            .await
+            .unwrap()?;
+
+        let mac = row.get(0);
+        let shutdown = row.get(1);
+        Some((mac, shutdown))
     }
 }
