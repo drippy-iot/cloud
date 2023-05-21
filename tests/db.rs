@@ -10,7 +10,9 @@ async fn database_tests() -> anyhow::Result<()> {
     let db = Database::from(client);
     let handle = tokio::spawn(conn);
 
-    let id = db.create_session(MacAddress([0x55, 0x44, 0x33, 0x22, 0x11, 0x00])).await;
+    // TODO: MetroTap should report to the server to "register" itself
+
+    let id = db.create_session(MacAddress([0x55, 0x44, 0x33, 0x22, 0x11, 0x00])).await.unwrap();
     assert!(db.is_valid_session(id).await);
     assert!(!db.is_valid_session(Uuid::nil()).await);
 
