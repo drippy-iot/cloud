@@ -5,7 +5,12 @@ use cookie::Cookie;
 use core::future::Future;
 use futures_util::TryFutureExt;
 use http_body_util::{BodyExt, Empty};
-use hyper::{body::Incoming, http::request::Parts, Method, Request, Response, StatusCode};
+use hyper::{
+    body::Incoming,
+    header::SET_COOKIE,
+    http::{request::Parts, HeaderValue},
+    Method, Request, Response, StatusCode,
+};
 use model::{decode, report::Flow, MacAddress};
 
 async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Response<Empty<D>>, StatusCode> {
@@ -40,6 +45,27 @@ async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Resp
 
                 let mut res = Response::new(Empty::new());
                 *res.status_mut() = if db.request_shutdown(mac).await { StatusCode::ACCEPTED } else { StatusCode::OK };
+                Ok(res)
+            }
+            "/auth/session" => {
+                if bytes.len() < 6 {
+                    return Err(StatusCode::BAD_REQUEST);
+                }
+
+                let mut mac = [0; 6];
+                mac.copy_from_slice(&bytes[..6]);
+
+                let Some(uuid) = db.create_session(MacAddress(mac)).await else {
+                    return Err(StatusCode::NOT_FOUND);
+                };
+
+                let fmt = uuid.simple();
+                let cookie = alloc::format!("sid={fmt}; HttpOnly; SameSite=None; Secure");
+                let cookie = HeaderValue::from_str(&cookie).unwrap();
+
+                let mut res = Response::new(Empty::new());
+                res.headers_mut().insert(SET_COOKIE, cookie);
+                *res.status_mut() = StatusCode::CREATED;
                 Ok(res)
             }
             "/report/flow" => {
