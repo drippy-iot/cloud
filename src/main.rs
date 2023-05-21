@@ -1,6 +1,7 @@
 use std::{
     env::var,
     net::{Ipv4Addr, TcpListener},
+    sync::Arc,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -25,6 +26,7 @@ fn main() -> anyhow::Result<()> {
 
         let (client, conn) = config.connect(tls).await?;
         let db = cloud::database::Database::from(client);
+        let db = Arc::new(db);
         let handle = rt.spawn(conn);
         log::info!("connected to the database");
 
@@ -44,10 +46,14 @@ fn main() -> anyhow::Result<()> {
 
             log::info!("new connection from {other}");
 
-            use core::convert::Infallible;
-            use futures_util::FutureExt;
-            use hyper::body::Bytes;
-            let svc = hyper::service::service_fn(|req| cloud::router::handle::<Bytes>(req).map(Ok::<_, Infallible>));
+            let outer = db.clone();
+            let svc = hyper::service::service_fn(move |req| {
+                use core::convert::Infallible;
+                use futures_util::FutureExt;
+                use hyper::body::Bytes;
+                let inner = outer.clone();
+                cloud::router::handle::<Bytes>(inner, req).map(Ok::<_, Infallible>)
+            });
             rt.spawn(http.serve_connection(stream, svc));
         }
 

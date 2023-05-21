@@ -1,10 +1,13 @@
+use crate::database::Database;
+
+use alloc::sync::Arc;
 use core::future::Future;
 use futures_util::TryFutureExt;
 use http_body_util::{BodyExt, Empty};
 use hyper::{body::Incoming, http::request::Parts, Method, Request, Response, StatusCode};
 use model::{decode, report::Flow, MacAddress};
 
-async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, StatusCode> {
+async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Response<Empty<D>>, StatusCode> {
     let (Parts { uri, method, .. }, incoming) = req.into_parts();
     let bytes = match incoming.collect().await {
         Ok(body) => body.to_bytes(),
@@ -17,31 +20,29 @@ async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, Sta
     match method {
         Method::POST => match uri.path() {
             "/report/flow" => {
-                let Ok(Flow { addr, flow }) = decode(&bytes) else {
+                let Ok(flow) = decode::<Flow>(&bytes) else {
                     log::error!("malformed water flow reported");
                     return Err(StatusCode::BAD_REQUEST);
                 };
 
-                log::info!("{addr} reported {flow} ticks for this interval");
-
-                // TODO: Send to the database
+                log::info!("{} reported {} ticks for this interval", flow.addr, flow.flow);
 
                 let mut res = Response::new(Empty::new());
-                *res.status_mut() = StatusCode::CREATED;
+                *res.status_mut() =
+                    if db.report_flow(flow).await { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
                 Ok(res)
             }
             "/report/leak" => {
-                let Ok(ping) = decode::<MacAddress>(&bytes) else {
+                let Ok(mac) = decode::<MacAddress>(&bytes) else {
                     log::error!("malformed leak reported");
                     return Err(StatusCode::BAD_REQUEST);
                 };
 
-                log::warn!("leak detected from {ping}");
-
-                // TODO: Send to the database
+                log::warn!("leak detected from {mac}");
 
                 let mut res = Response::new(Empty::new());
-                *res.status_mut() = StatusCode::CREATED;
+                *res.status_mut() =
+                    if db.report_leak(mac).await { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
                 Ok(res)
             }
             path => {
@@ -56,8 +57,8 @@ async fn try_handle<D>(req: Request<Incoming>) -> Result<Response<Empty<D>>, Sta
     }
 }
 
-pub fn handle<D>(req: Request<Incoming>) -> impl Future<Output = Response<Empty<D>>> {
-    try_handle(req).unwrap_or_else(|code| {
+pub fn handle<D>(db: Arc<Database>, req: Request<Incoming>) -> impl Future<Output = Response<Empty<D>>> {
+    try_handle(db, req).unwrap_or_else(|code| {
         let mut res = Response::new(Empty::new());
         *res.status_mut() = code;
         res
