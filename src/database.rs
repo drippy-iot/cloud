@@ -55,7 +55,22 @@ impl Database {
             .query_one(
                 "WITH _ AS (INSERT INTO leak (mac) VALUES ($1) RETURNING mac), \
                 old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
-                UPDATE unit SET shutdown = DEFAULT FROM _, old WHERE unit.mac = _.mac RETURNING old.shutdown",
+                UPDATE unit SET shutdown = FALSE FROM _, old WHERE unit.mac = _.mac RETURNING old.shutdown",
+                &[&mac],
+            )
+            .await
+            .unwrap();
+        row.get(0)
+    }
+
+    /// Sets the shutdown flag for the unit associated with the given
+    /// MAC address. Returns the previously set value for the flag.
+    pub async fn request_shutdown(&self, mac: MacAddress) -> bool {
+        let row = self
+            .db
+            .query_one(
+                "WITH _ AS (SELECT mac, shutdown FROM unit WHERE mac = $1) \
+                UPDATE unit SET shutdown = TRUE FROM _ WHERE unit.mac = _.mac RETURNING _.shutdown",
                 &[&mac],
             )
             .await
@@ -85,7 +100,10 @@ impl Database {
     pub async fn get_unit_from_session(&self, sid: Uuid) -> Option<(MacAddress, bool)> {
         let row = self
             .db
-            .query_opt("SELECT mac, shutdown FROM session s INNER JOIN unit u USING (mac) WHERE id = $1 LIMIT 1", &[&sid])
+            .query_opt(
+                "SELECT mac, shutdown FROM session s INNER JOIN unit u USING (mac) WHERE id = $1 LIMIT 1",
+                &[&sid],
+            )
             .await
             .unwrap()?;
 

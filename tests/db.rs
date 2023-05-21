@@ -31,6 +31,16 @@ async fn database_tests() -> anyhow::Result<()> {
     assert!(!db.report_leak(mac).await);
     assert!(!db.report_leak(mac).await);
 
+    // Request shutdown when reporting water flow
+    assert!(!db.request_shutdown(mac).await);                    // request
+    assert!(db.report_flow(Flow { addr: mac, flow: 50 }).await); // acknowledge & reset
+    assert!(!db.report_flow(Flow { addr: mac, flow: 0 }).await); // proceed
+
+    // Request shutdown when reporting leaks
+    assert!(!db.request_shutdown(mac).await); // request
+    assert!(db.report_leak(mac).await);       // acknowledge & reset
+    assert!(!db.report_leak(mac).await);      // proceed
+
     let id = db.create_session(mac).await.unwrap();
     let (other_mac, shutdown) = db.get_unit_from_session(id).await.unwrap();
     assert_eq!(mac, other_mac);
