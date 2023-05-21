@@ -26,6 +26,7 @@ fn main() -> anyhow::Result<()> {
         let (client, conn) = config.connect(tls).await?;
         let db = cloud::database::Database::from(client);
         let handle = rt.spawn(conn);
+        log::info!("connected to the database");
 
         loop {
             let res = tokio::select! {
