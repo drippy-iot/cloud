@@ -49,7 +49,8 @@ async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Respons
                     return Err(StatusCode::UNAUTHORIZED);
                 };
 
-                log::info!("session {sid} retrieved session details for unit {mac} [{shutdown}]");
+                let fmt = sid.simple();
+                log::info!("session {fmt} retrieved session details for unit {mac} [{shutdown}]");
 
                 let bytes = alloc::boxed::Box::<[_]>::from(mac.0);
                 let body = Full::new(Bytes::from(bytes));
@@ -70,14 +71,15 @@ async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Respons
                     return Err(StatusCode::UNAUTHORIZED);
                 };
 
+                let fmt = sid.simple();
                 let Some((mac, _)) = db.get_unit_from_session(sid).await else {
-                    log::error!("invalid session {sid}");
+                    log::error!("invalid session {fmt}");
                     return Err(StatusCode::UNAUTHORIZED);
                 };
 
                 let mut res = Response::default();
                 *res.status_mut() = if db.request_shutdown(mac).await { StatusCode::ACCEPTED } else { StatusCode::OK };
-                log::info!("session {sid} requested shutdown of unit {mac}");
+                log::info!("session {fmt} requested shutdown of unit {mac}");
                 Ok(res)
             }
             "/auth/session" => {
