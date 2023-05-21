@@ -1,5 +1,5 @@
 use cloud::database::Database;
-use model::MacAddress;
+use model::{MacAddress, report::Flow};
 use nanorand::{WyRand, Rng};
 use tokio_postgres::NoTls;
 use uuid::Uuid;
@@ -19,6 +19,9 @@ async fn database_tests() -> anyhow::Result<()> {
 
     assert!(!db.register_unit(mac).await); // first registration
     assert!(!db.register_unit(mac).await); // existing registration
+
+    assert!(!db.report_flow(Flow { addr: mac, flow: 50 }).await);
+    assert!(!db.report_flow(Flow { addr: mac, flow: 78 }).await);
 
     let id = db.create_session(mac).await.unwrap();
     assert!(db.is_valid_session(id).await);

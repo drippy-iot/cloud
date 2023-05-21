@@ -18,7 +18,20 @@ impl Database {
     pub async fn register_unit(&self, mac: MacAddress) -> bool {
         let row = self
             .db
-            .query_one("INSERT INTO unit (mac) VALUES ($1) ON CONFLICT (mac) DO UPDATE SET mac = $1 RETURNING shutdown", &[&mac])
+            .query_one(
+                "INSERT INTO unit (mac) VALUES ($1) ON CONFLICT (mac) DO UPDATE SET mac = $1 RETURNING shutdown",
+                &[&mac],
+            )
+            .await
+            .unwrap();
+        row.get(0)
+    }
+
+    pub async fn report_flow(&self, Flow { addr, flow }: Flow) -> bool {
+        let flow = i16::try_from(flow).unwrap();
+        let row = self
+            .db
+            .query_one("WITH _ AS (INSERT INTO status (mac, flow) VALUES ($1, $2) RETURNING mac) SELECT shutdown FROM _ INNER JOIN unit USING (mac)", &[&addr, &flow])
             .await
             .unwrap();
         row.get(0)
