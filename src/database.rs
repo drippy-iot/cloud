@@ -101,7 +101,7 @@ impl Database {
         let row = self
             .db
             .query_opt(
-                "SELECT mac, shutdown FROM session s INNER JOIN unit u USING (mac) WHERE id = $1 LIMIT 1",
+                "SELECT mac, shutdown FROM session INNER JOIN unit USING (mac) WHERE id = $1 LIMIT 1",
                 &[&sid],
             )
             .await

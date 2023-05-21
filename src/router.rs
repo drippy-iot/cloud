@@ -7,14 +7,27 @@ use futures_util::TryFutureExt;
 use http_body_util::{BodyExt, Empty};
 use hyper::{
     body::Incoming,
-    header::SET_COOKIE,
+    header::{COOKIE, SET_COOKIE},
     http::{request::Parts, HeaderValue},
-    Method, Request, Response, StatusCode,
+    HeaderMap, Method, Request, Response, StatusCode,
 };
 use model::{decode, report::Flow, MacAddress};
+use uuid::Uuid;
+
+fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
+    let header = headers.get(COOKIE)?.to_str().ok()?;
+    Cookie::split_parse(header).find_map(|cookie| {
+        let c = cookie.ok()?;
+        if c.name() == "sid" {
+            Uuid::parse_str(c.value()).ok()
+        } else {
+            None
+        }
+    })
+}
 
 async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Response<Empty<D>>, StatusCode> {
-    let (Parts { uri, method, .. }, incoming) = req.into_parts();
+    let (Parts { uri, method, headers, .. }, incoming) = req.into_parts();
     let bytes = match incoming.collect().await {
         Ok(body) => body.to_bytes(),
         Err(err) => {
@@ -24,18 +37,24 @@ async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Resp
     };
 
     match method {
+        Method::GET => match uri.path() {
+            "/auth/session" => {
+                let Some(sid) = extract_session_id(&headers) else {
+                    return Err(StatusCode::UNAUTHORIZED);
+                };
+                let mut res = Response::new(Empty::new());
+                *res.status_mut() =
+                    if db.get_unit_from_session(sid).await.is_some() { StatusCode::OK } else { StatusCode::NOT_FOUND };
+                Ok(res)
+            }
+            path => {
+                log::warn!("unexpected request to GET {path}");
+                Err(StatusCode::NOT_FOUND)
+            }
+        },
         Method::POST => match uri.path() {
             "/api/shutdown" => {
-                let text = core::str::from_utf8(&bytes).unwrap();
-                let Some(sid) = Cookie::split_parse(text).find_map(|cookie| {
-                    let c = cookie.ok()?;
-                    if c.name() == "sid" {
-                        let uuid = uuid::Uuid::parse_str(c.value()).ok()?;
-                        Some(uuid)
-                    } else {
-                        None
-                    }
-                }) else {
+                let Some(sid) = extract_session_id(&headers) else {
                     return Err(StatusCode::UNAUTHORIZED);
                 };
 
@@ -95,12 +114,12 @@ async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Resp
                 Ok(res)
             }
             path => {
-                log::error!("unexpected request to POST {path}");
+                log::warn!("unexpected request to POST {path}");
                 Err(StatusCode::NOT_FOUND)
             }
         },
         method => {
-            log::error!("unexpected {method} method received");
+            log::warn!("unexpected {method} method received");
             Err(StatusCode::METHOD_NOT_ALLOWED)
         }
     }
