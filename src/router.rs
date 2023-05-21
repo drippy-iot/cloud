@@ -132,6 +132,18 @@ async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Respons
                     if db.report_leak(mac).await { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
                 Ok(res)
             }
+            "/report/register" => {
+                let Ok(mac) = decode::<MacAddress>(&bytes) else {
+                    log::error!("malformed MAC registration");
+                    return Err(StatusCode::BAD_REQUEST);
+                };
+
+                let mut res = Response::default();
+                *res.status_mut() =
+                    if db.register_unit(mac).await { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
+                log::info!("unit {mac} registered");
+                Ok(res)
+            }
             path => {
                 log::error!("unexpected request to POST {path}");
                 Err(StatusCode::NOT_FOUND)
