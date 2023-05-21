@@ -1,26 +1,33 @@
+dbuser := "postgres"
+dbname := "drippy"
+dbdata := "data"
+
 # Start the PostgreSQL daemon.
 db:
-    @postgres -D data
+    @postgres -D {{dbdata}}
+
+shell:
+    @psql -U {{dbuser}} {{dbname}}
 
 # Create the `/data` folder.
 initdb:
-    @initdb -D data -U postgres
+    @initdb -D {{dbdata}} -U {{dbuser}}
 
 # Modify the template database so that it matches our initialization script.
 template:
-    @psql -U postgres -f db/init.sql -1 template1
+    @psql -U {{dbuser}} -f db/init.sql -1 template1
 
 # Instantiate the template database.
 create:
-    @createdb -U postgres drippy
+    @createdb -U {{dbuser}} {{dbname}}
 
 # Drop the instantiated database.
 drop:
-    @dropdb -U postgres drippy
+    @dropdb -U {{dbuser}} {{dbname}}
 
 # Completely delete the entire `/data` folder.
 nuke:
-    @rm -r data
+    @rm -r {{dbdata}}
 
 # Create the `/data` folder and start the database daemon in one step.
 init: initdb && db
