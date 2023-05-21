@@ -1,9 +1,7 @@
-mod database;
-
-use std::env::var;
-use std::net::{Ipv4Addr, TcpListener};
-
-mod router;
+use std::{
+    env::var,
+    net::{Ipv4Addr, TcpListener},
+};
 
 fn main() -> anyhow::Result<()> {
     let config: tokio_postgres::Config = var("PG_URL")?.parse()?;
@@ -26,7 +24,7 @@ fn main() -> anyhow::Result<()> {
         let mut stop = core::pin::pin!(tokio::signal::ctrl_c());
 
         let (client, conn) = config.connect(tls).await?;
-        let db = database::Database::from(client);
+        let db = cloud::database::Database::from(client);
         let handle = rt.spawn(conn);
 
         loop {
@@ -48,7 +46,7 @@ fn main() -> anyhow::Result<()> {
             use core::convert::Infallible;
             use futures_util::FutureExt;
             use hyper::body::Bytes;
-            let svc = hyper::service::service_fn(|req| router::handle::<Bytes>(req).map(Ok::<_, Infallible>));
+            let svc = hyper::service::service_fn(|req| cloud::router::handle::<Bytes>(req).map(Ok::<_, Infallible>));
             rt.spawn(http.serve_connection(stream, svc));
         }
 
