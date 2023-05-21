@@ -1,4 +1,4 @@
-pub use model::MacAddress;
+pub use model::{report::Flow, MacAddress};
 pub use tokio_postgres::Client;
 pub use uuid::Uuid;
 
@@ -15,6 +15,15 @@ impl From<Client> for Database {
 }
 
 impl Database {
+    pub async fn register_unit(&self, mac: MacAddress) -> bool {
+        let row = self
+            .db
+            .query_one("INSERT INTO unit (mac) VALUES ($1) ON CONFLICT (mac) DO UPDATE SET mac = $1 RETURNING shutdown", &[&mac])
+            .await
+            .unwrap();
+        row.get(0)
+    }
+
     pub async fn create_session(&self, mac: MacAddress) -> Option<Uuid> {
         let err = match self.db.query_one("INSERT INTO session (mac) VALUES ($1) RETURNING id", &[&mac]).await {
             Ok(row) => return row.try_get(0).ok(),

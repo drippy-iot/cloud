@@ -1,5 +1,6 @@
 use cloud::database::Database;
 use model::MacAddress;
+use nanorand::{WyRand, Rng};
 use tokio_postgres::NoTls;
 use uuid::Uuid;
 
@@ -10,9 +11,16 @@ async fn database_tests() -> anyhow::Result<()> {
     let db = Database::from(client);
     let handle = tokio::spawn(conn);
 
-    // TODO: MetroTap should report to the server to "register" itself
+    // Generate random MAC address for testing purposes.
+    let mut rng = WyRand::new();
+    let [a, b, c, d, e, f, ..] = rng.rand();
+    drop(rng);
+    let mac = MacAddress([a, b, c, d, e, f]);
 
-    let id = db.create_session(MacAddress([0x55, 0x44, 0x33, 0x22, 0x11, 0x00])).await.unwrap();
+    assert!(!db.register_unit(mac).await); // first registration
+    assert!(!db.register_unit(mac).await); // existing registration
+
+    let id = db.create_session(mac).await.unwrap();
     assert!(db.is_valid_session(id).await);
     assert!(!db.is_valid_session(Uuid::nil()).await);
 

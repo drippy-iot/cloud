@@ -112,6 +112,7 @@ dependencies = [
  "hyper",
  "log",
  "model",
+ "nanorand",
  "native-tls",
  "postgres-native-tls",
  "tokio",
@@ -538,11 +539,17 @@ dependencies = [
 [[package]]
 name = "model"
 version = "0.1.0"
-source = "git+https://github.com/drippy-iot/model.git#4eb8e669adf70981d58e1c725fa8e5b4011b5796"
+source = "git+https://github.com/drippy-iot/model.git#b334204f6f1d30161da721587d2a4da5e73c3cf7"
 dependencies = [
  "bitcode",
  "postgres-types",
 ]
+
+[[package]]
+name = "nanorand"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a51313c5820b0b02bd422f4b44776fbf47961755c74ce64afc73bfad10226c3"
 
 [[package]]
 name = "native-tls"

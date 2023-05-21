@@ -2,7 +2,7 @@ CREATE EXTENSION pgcrypto;
 
 CREATE TABLE unit(
     mac MACADDR NOT NULL,
-    shutdown BOOLEAN NOT NULL,
+    shutdown BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (mac)
 );
 
