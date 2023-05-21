@@ -31,7 +31,26 @@ impl Database {
         let flow = i16::try_from(flow).unwrap();
         let row = self
             .db
-            .query_one("WITH _ AS (INSERT INTO status (mac, flow) VALUES ($1, $2) RETURNING mac) SELECT shutdown FROM _ INNER JOIN unit USING (mac)", &[&addr, &flow])
+            .query_one(
+                "WITH _ AS (INSERT INTO status (mac, flow) VALUES ($1, $2) RETURNING mac), \
+                old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
+                UPDATE unit SET shutdown = DEFAULT FROM _, old WHERE unit.mac = _.mac RETURNING old.shutdown",
+                &[&addr, &flow],
+            )
+            .await
+            .unwrap();
+        row.get(0)
+    }
+
+    pub async fn report_leak(&self, mac: MacAddress) -> bool {
+        let row = self
+            .db
+            .query_one(
+                "WITH _ AS (INSERT INTO leak (mac) VALUES ($1) RETURNING mac), \
+                old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
+                UPDATE unit SET shutdown = DEFAULT FROM _, old WHERE unit.mac = _.mac RETURNING old.shutdown",
+                &[&mac],
+            )
             .await
             .unwrap();
         row.get(0)

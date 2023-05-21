@@ -17,11 +17,19 @@ async fn database_tests() -> anyhow::Result<()> {
     drop(rng);
     let mac = MacAddress([a, b, c, d, e, f]);
 
+    // Register the unit twice just to check if we handle the upsert gracefully
     assert!(!db.register_unit(mac).await); // first registration
     assert!(!db.register_unit(mac).await); // existing registration
 
+    // Ping water flow thrice; no shutdown requests must occur
     assert!(!db.report_flow(Flow { addr: mac, flow: 50 }).await);
     assert!(!db.report_flow(Flow { addr: mac, flow: 78 }).await);
+    assert!(!db.report_flow(Flow { addr: mac, flow: 100 }).await);
+
+    // Report leaks thrice; no shutdown requests must occur
+    assert!(!db.report_leak(mac).await);
+    assert!(!db.report_leak(mac).await);
+    assert!(!db.report_leak(mac).await);
 
     let id = db.create_session(mac).await.unwrap();
     assert!(db.is_valid_session(id).await);
