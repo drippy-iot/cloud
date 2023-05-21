@@ -4,6 +4,7 @@
 
 **Name** | **Description** | **Required** | **Default**
 -------- | --------------- | :----------: | ----------:
+`PG_URL` | PostgreSQL [connection string](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING). | &#x2714; |
 `PORT` | Network port to bind to when listening for new connections. | &#x2714; |
 `RUST_LOG` | Log verbosity level. See the [`env_logger`] crate documentation. | &#x274c; | `error`
 `RUST_LOG_STYLE` | Whether to enable ANSI colors in the output. See the [`env_logger`] crate documentation. | &#x274c; | `auto`
