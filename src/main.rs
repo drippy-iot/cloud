@@ -48,11 +48,9 @@ fn main() -> anyhow::Result<()> {
 
             let outer = db.clone();
             let svc = hyper::service::service_fn(move |req| {
-                use core::convert::Infallible;
                 use futures_util::FutureExt;
-                use hyper::body::Bytes;
                 let inner = outer.clone();
-                cloud::router::handle::<Bytes>(inner, req).map(Ok::<_, Infallible>)
+                cloud::router::handle(inner, req).map(Ok::<_, core::convert::Infallible>)
             });
             rt.spawn(http.serve_connection(stream, svc));
         }

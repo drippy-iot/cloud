@@ -4,9 +4,9 @@ use alloc::sync::Arc;
 use cookie::Cookie;
 use core::future::Future;
 use futures_util::TryFutureExt;
-use http_body_util::{BodyExt, Empty};
+use http_body_util::{BodyExt, Full};
 use hyper::{
-    body::Incoming,
+    body::{Bytes, Incoming},
     header::{COOKIE, SET_COOKIE},
     http::{request::Parts, HeaderValue},
     HeaderMap, Method, Request, Response, StatusCode,
@@ -26,7 +26,7 @@ fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
     })
 }
 
-async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Response<Empty<D>>, StatusCode> {
+async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Response<Full<Bytes>>, StatusCode> {
     let (Parts { uri, method, headers, .. }, incoming) = req.into_parts();
     let bytes = match incoming.collect().await {
         Ok(body) => body.to_bytes(),
@@ -42,9 +42,16 @@ async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Resp
                 let Some(sid) = extract_session_id(&headers) else {
                     return Err(StatusCode::UNAUTHORIZED);
                 };
-                let mut res = Response::new(Empty::new());
-                *res.status_mut() =
-                    if db.get_unit_from_session(sid).await.is_some() { StatusCode::OK } else { StatusCode::NOT_FOUND };
+
+                let Some((MacAddress(mac), shutdown)) = db.get_unit_from_session(sid).await else {
+                    return Err(StatusCode::NOT_FOUND);
+                };
+
+                let bytes = alloc::boxed::Box::<[_]>::from(mac);
+                let body = Full::new(Bytes::from(bytes));
+
+                let mut res = Response::new(body);
+                *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK };
                 Ok(res)
             }
             path => {
@@ -62,7 +69,7 @@ async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Resp
                     return Err(StatusCode::UNAUTHORIZED);
                 };
 
-                let mut res = Response::new(Empty::new());
+                let mut res = Response::default();
                 *res.status_mut() = if db.request_shutdown(mac).await { StatusCode::ACCEPTED } else { StatusCode::OK };
                 Ok(res)
             }
@@ -82,7 +89,7 @@ async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Resp
                 let cookie = alloc::format!("sid={fmt}; HttpOnly; SameSite=None; Secure");
                 let cookie = HeaderValue::from_str(&cookie).unwrap();
 
-                let mut res = Response::new(Empty::new());
+                let mut res = Response::default();
                 res.headers_mut().insert(SET_COOKIE, cookie);
                 *res.status_mut() = StatusCode::CREATED;
                 Ok(res)
@@ -95,7 +102,7 @@ async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Resp
 
                 log::info!("{} reported {} ticks for this interval", flow.addr, flow.flow);
 
-                let mut res = Response::new(Empty::new());
+                let mut res = Response::default();
                 *res.status_mut() =
                     if db.report_flow(flow).await { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
                 Ok(res)
@@ -108,7 +115,7 @@ async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Resp
 
                 log::warn!("leak detected from {mac}");
 
-                let mut res = Response::new(Empty::new());
+                let mut res = Response::default();
                 *res.status_mut() =
                     if db.report_leak(mac).await { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
                 Ok(res)
@@ -125,9 +132,9 @@ async fn try_handle<D>(db: Arc<Database>, req: Request<Incoming>) -> Result<Resp
     }
 }
 
-pub fn handle<D>(db: Arc<Database>, req: Request<Incoming>) -> impl Future<Output = Response<Empty<D>>> {
+pub fn handle(db: Arc<Database>, req: Request<Incoming>) -> impl Future<Output = Response<Full<Bytes>>> {
     try_handle(db, req).unwrap_or_else(|code| {
-        let mut res = Response::new(Empty::new());
+        let mut res = Response::default();
         *res.status_mut() = code;
         res
     })
