@@ -29,10 +29,10 @@ fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
 
 fn extract_last_modified(headers: &HeaderMap) -> Option<chrono::DateTime<chrono::Utc>> {
     let header = headers.get(LAST_MODIFIED)?.to_str().ok()?;
-    
+
     if header == "" {
         header.parse::<chrono::DateTime<chrono::Utc>>().ok()
-    }else{
+    } else {
         chrono::Utc.with_ymd_and_hms(2023, 5, 20, 0, 0, 0).single()
     }
 }
