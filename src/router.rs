@@ -70,6 +70,35 @@ async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Respons
                 *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK };
                 Ok(res)
             }
+            "/api/metrics" => {
+                use alloc::vec::Vec;
+
+                let Some(sid) = extract_session_id(&headers) else {
+                    log::error!("absent session");
+                    return Err(StatusCode::UNAUTHORIZED);
+                };
+
+                let Some(last_modified) = extract_last_modified(&headers) else {
+                    log::error!("something wrong with the parsing");
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                };
+
+                let Some((mac, shutdown)) = db.get_unit_from_session(sid).await else {
+                    log::error!("invalid session {sid}");
+                    return Err(StatusCode::UNAUTHORIZED);
+                };
+
+                let fmt = sid.simple();
+                log::info!("session {fmt} retrieved metrics for unit {mac} [{shutdown}]");
+
+                let data = db.get_flows(mac, last_modified).await.collect::<Vec<_>>().await;
+
+                let body = Full::new(Bytes::from(serde_json::to_vec(&data).unwrap()));
+
+                let mut res = Response::new(body);
+                *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK };
+                Ok(res)
+            }
             path => {
                 log::error!("unexpected request to GET {path}");
                 Err(StatusCode::NOT_FOUND)
