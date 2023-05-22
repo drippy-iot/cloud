@@ -1,13 +1,14 @@
 use crate::database::Database;
 
 use alloc::sync::Arc;
+use chrono::TimeZone;
 use cookie::Cookie;
 use core::future::Future;
-use futures_util::TryFutureExt;
+use futures_util::{StreamExt, TryFutureExt};
 use http_body_util::{BodyExt, Full};
 use hyper::{
     body::{Bytes, Incoming},
-    header::{COOKIE, SET_COOKIE},
+    header::{COOKIE, LAST_MODIFIED, SET_COOKIE},
     http::{request::Parts, HeaderValue},
     HeaderMap, Method, Request, Response, StatusCode,
 };
@@ -24,6 +25,16 @@ fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
             None
         }
     })
+}
+
+fn extract_last_modified(headers: &HeaderMap) -> Option<chrono::DateTime<chrono::Utc>> {
+    let header = headers.get(LAST_MODIFIED)?.to_str().ok()?;
+    
+    if header == "" {
+        header.parse::<chrono::DateTime<chrono::Utc>>().ok()
+    }else{
+        chrono::Utc.with_ymd_and_hms(2023, 5, 20, 0, 0, 0).single()
+    }
 }
 
 async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Response<Full<Bytes>>, StatusCode> {
