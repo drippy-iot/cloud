@@ -2,6 +2,9 @@ pub use model::{report::Flow, MacAddress};
 pub use tokio_postgres::Client;
 pub use uuid::Uuid;
 
+use crate::model::ClientFlow;
+
+use futures_util::{Stream, StreamExt, TryStreamExt};
 use tokio_postgres::error::SqlState;
 
 pub struct Database {
@@ -100,15 +103,35 @@ impl Database {
     pub async fn get_unit_from_session(&self, sid: Uuid) -> Option<(MacAddress, bool)> {
         let row = self
             .db
-            .query_opt(
-                "SELECT mac, shutdown FROM session INNER JOIN unit USING (mac) WHERE id = $1 LIMIT 1",
-                &[&sid],
-            )
+            .query_opt("SELECT mac, shutdown FROM session INNER JOIN unit USING (mac) WHERE id = $1 LIMIT 1", &[&sid])
             .await
             .unwrap()?;
 
         let mac = row.get(0);
         let shutdown = row.get(1);
         Some((mac, shutdown))
+    }
+
+    /// Fetches a stream of [`ClientFlow`] (given a [`chrono::DateTime`] and the [`MacAddress`]) from the database.
+    pub async fn get_flows(
+        &self,
+        mac: MacAddress,
+        start: chrono::DateTime<chrono::Utc>,
+    ) -> impl Stream<Item = ClientFlow> {
+        use tokio_postgres::types::ToSql;
+        self.db
+            .query_raw(
+                "SELECT creation, flow FROM status WHERE mac = $1 AND creation > $2",
+                [&mac as &(dyn ToSql + Sync), &start as _],
+            )
+            .await
+            .unwrap()
+            .map_ok(|row| {
+                let creation = row.get(0);
+                let flow = row.get(1);
+                ClientFlow { creation, flow }
+            })
+            .into_stream()
+            .map(Result::unwrap)
     }
 }
