@@ -1,7 +1,6 @@
 use crate::database::Database;
 
 use alloc::sync::Arc;
-use chrono::TimeZone;
 use cookie::Cookie;
 use core::future::Future;
 use futures_util::{StreamExt, TryFutureExt};
@@ -29,11 +28,10 @@ fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
 
 fn extract_last_modified(headers: &HeaderMap) -> Option<chrono::DateTime<chrono::Utc>> {
     let header = headers.get(LAST_MODIFIED)?.to_str().ok()?;
-
-    if header == "" {
-        header.parse::<chrono::DateTime<chrono::Utc>>().ok()
+    if header.is_empty() {
+        None
     } else {
-        chrono::Utc.with_ymd_and_hms(2023, 5, 20, 0, 0, 0).single()
+        header.parse().ok()
     }
 }
 
@@ -91,9 +89,9 @@ async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Respons
                 let fmt = sid.simple();
                 log::info!("session {fmt} retrieved metrics for unit {mac} [{shutdown}]");
 
-                let data = db.get_flows(mac, last_modified).await.collect::<Vec<_>>().await;
-
-                let body = Full::new(Bytes::from(serde_json::to_vec(&data).unwrap()));
+                let data: Vec<_> = db.get_flows(mac, last_modified).await.collect().await;
+                let json = serde_json::to_vec(&data).unwrap();
+                let body = Full::new(Bytes::from(json));
 
                 let mut res = Response::new(body);
                 *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK };
