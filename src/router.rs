@@ -3,11 +3,11 @@ use crate::database::Database;
 use alloc::sync::Arc;
 use cookie::Cookie;
 use core::future::Future;
-use futures_util::TryFutureExt;
+use futures_util::{StreamExt, TryFutureExt};
 use http_body_util::{BodyExt, Full};
 use hyper::{
     body::{Bytes, Incoming},
-    header::{COOKIE, SET_COOKIE},
+    header::{COOKIE, LAST_MODIFIED, SET_COOKIE},
     http::{request::Parts, HeaderValue},
     HeaderMap, Method, Request, Response, StatusCode,
 };
@@ -24,6 +24,15 @@ fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
             None
         }
     })
+}
+
+fn extract_last_modified(headers: &HeaderMap) -> Option<chrono::DateTime<chrono::Utc>> {
+    let header = headers.get(LAST_MODIFIED)?.to_str().ok()?;
+    if header.is_empty() {
+        None
+    } else {
+        header.parse().ok()
+    }
 }
 
 async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Response<Full<Bytes>>, StatusCode> {
@@ -54,6 +63,35 @@ async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Respons
 
                 let bytes = alloc::boxed::Box::<[_]>::from(mac.0);
                 let body = Full::new(Bytes::from(bytes));
+
+                let mut res = Response::new(body);
+                *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK };
+                Ok(res)
+            }
+            "/api/metrics" => {
+                use alloc::vec::Vec;
+
+                let Some(sid) = extract_session_id(&headers) else {
+                    log::error!("absent session");
+                    return Err(StatusCode::UNAUTHORIZED);
+                };
+
+                let Some(last_modified) = extract_last_modified(&headers) else {
+                    log::error!("something wrong with the parsing");
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                };
+
+                let Some((mac, shutdown)) = db.get_unit_from_session(sid).await else {
+                    log::error!("invalid session {sid}");
+                    return Err(StatusCode::UNAUTHORIZED);
+                };
+
+                let fmt = sid.simple();
+                log::info!("session {fmt} retrieved metrics for unit {mac} [{shutdown}]");
+
+                let data: Vec<_> = db.get_flows(mac, last_modified).await.collect().await;
+                let json = serde_json::to_vec(&data).unwrap();
+                let body = Full::new(Bytes::from(json));
 
                 let mut res = Response::new(body);
                 *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK };
