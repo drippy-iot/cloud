@@ -71,14 +71,14 @@ async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Respons
             "/api/metrics" => {
                 use alloc::vec::Vec;
 
+                let Some(last_modified) = extract_last_modified(&headers) else {
+                    log::error!("something wrong with the parsing");
+                    return Err(StatusCode::BAD_REQUEST);
+                };
+
                 let Some(sid) = extract_session_id(&headers) else {
                     log::error!("absent session");
                     return Err(StatusCode::UNAUTHORIZED);
-                };
-
-                let Some(last_modified) = extract_last_modified(&headers) else {
-                    log::error!("something wrong with the parsing");
-                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
                 };
 
                 let Some((mac, shutdown)) = db.get_unit_from_session(sid).await else {
