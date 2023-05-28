@@ -120,7 +120,7 @@ impl Database {
     pub async fn get_flows(
         &self,
         mac: MacAddress,
-        start: chrono::DateTime<chrono::Utc>,
+        start: DateTime<Utc>,
     ) -> impl Stream<Item = ClientFlow> {
         use tokio_postgres::types::ToSql;
         self.db
