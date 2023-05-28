@@ -7,5 +7,5 @@ pub struct ClientFlow {
     #[serde(with = "ts_milliseconds")]
     pub creation: DateTime<Utc>,
     // Flow rate of a device at a given time.
-    pub flow: u32,
+    pub flow: u16,
 }

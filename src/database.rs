@@ -132,8 +132,8 @@ impl Database {
             .unwrap()
             .map_ok(|row| {
                 let creation = row.get(0);
-                let flow = row.get(1);
-                ClientFlow { creation, flow }
+                let data: i16 = row.get(1);
+                ClientFlow { creation, flow: data.try_into().unwrap() }
             })
             .into_stream()
             .map(Result::unwrap)
