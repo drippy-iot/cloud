@@ -1,13 +1,14 @@
 use crate::{database::Database, model::ClientFlow};
 
 use alloc::{string::String, sync::Arc, vec::Vec};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use cookie::Cookie;
 use core::{convert::Infallible, future::Future};
 use futures_util::{FutureExt, Stream, StreamExt as _, TryFutureExt as _};
-use http_body_util::{BodyExt, Either, Full, StreamBody};
+use http_body_util::{BodyExt as _, Either, Full, StreamBody};
 use hyper::{
     body::{Bytes, Frame, Incoming},
-    header::{CONTENT_TYPE, COOKIE, LAST_MODIFIED, SET_COOKIE},
+    header::{CONTENT_TYPE, COOKIE, SET_COOKIE},
     http::{request::Parts, HeaderValue},
     HeaderMap, Method, Request, Response, StatusCode,
 };
@@ -25,15 +26,6 @@ fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
             None
         }
     })
-}
-
-fn extract_last_modified(headers: &HeaderMap) -> Option<chrono::DateTime<chrono::Utc>> {
-    let header = headers.get(LAST_MODIFIED)?.to_str().ok()?;
-    if header.is_empty() {
-        None
-    } else {
-        header.parse().ok()
-    }
 }
 
 #[derive(Clone)]
@@ -88,8 +80,21 @@ impl Router {
                     Ok(res)
                 }
                 "/api/metrics" => {
-                    let Some(last_modified) = extract_last_modified(&headers) else {
-                        log::error!("cannot parse the last modified date");
+                    let Some(query) = uri.query() else {
+                        log::error!("query string is absent");
+                        return Err(StatusCode::BAD_REQUEST);
+                    };
+
+                    let Some(start) = query.split('&').find_map(|pair| {
+                        let (key, value) = pair.split_once('=')?;
+                        if key != "start" {
+                            return None;
+                        }
+                        let millis = value.parse().ok()?;
+                        let datetime = NaiveDateTime::from_timestamp_millis(millis)?;
+                        Some(DateTime::from_utc(datetime, Utc))
+                    }) else {
+                        log::error!("query did not contain a valid timestamp");
                         return Err(StatusCode::BAD_REQUEST);
                     };
 
@@ -103,7 +108,7 @@ impl Router {
                         return Err(StatusCode::UNAUTHORIZED);
                     };
 
-                    let data: Vec<_> = self.db.get_flows(mac, last_modified).await.collect().await;
+                    let data: Vec<_> = self.db.get_flows(mac, start).await.collect().await;
                     let fmt = sid.simple();
                     log::info!("session {fmt} retrieved metrics for unit {mac} [{shutdown}]");
 
