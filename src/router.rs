@@ -208,6 +208,7 @@ impl Router {
                     } else {
                         StatusCode::CREATED
                     };
+
                     Ok(res)
                 }
                 "/report/register" => {
