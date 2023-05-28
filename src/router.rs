@@ -1,6 +1,6 @@
-use crate::database::Database;
+use crate::{database::Database, model::ClientFlow};
 
-use alloc::sync::Arc;
+use alloc::{string::String, sync::Arc, vec::Vec};
 use cookie::Cookie;
 use core::{convert::Infallible, future::Future};
 use futures_util::{FutureExt, Stream, StreamExt as _, TryFutureExt as _};
@@ -12,7 +12,7 @@ use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
 };
 use model::{decode, report::Flow, MacAddress};
-use tokio::sync::broadcast::Sender;
+use tokio::sync::broadcast::{channel, Sender};
 use uuid::Uuid;
 
 fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
@@ -38,12 +38,16 @@ fn extract_last_modified(headers: &HeaderMap) -> Option<chrono::DateTime<chrono:
 
 #[derive(Clone)]
 pub struct Router {
-    tx: Sender<Bytes>,
+    tx: Sender<(MacAddress, Bytes)>,
     db: Arc<Database>,
 }
 
 impl Router {
-    pub fn new(tx: Sender<Bytes>, db: Arc<Database>) -> Self {
+    /// Maximum capacity of the internal broadcast channel.
+    const CAPACITY: usize = 16;
+
+    pub fn new(db: Arc<Database>) -> Self {
+        let (tx, _) = channel(Self::CAPACITY);
         Self { tx, db }
     }
 
@@ -99,25 +103,32 @@ impl Router {
                         return Err(StatusCode::UNAUTHORIZED);
                     };
 
-                    let data: alloc::vec::Vec<_> = self.db.get_flows(mac, last_modified).await.collect().await;
+                    let data: Vec<_> = self.db.get_flows(mac, last_modified).await.collect().await;
                     let fmt = sid.simple();
                     log::info!("session {fmt} retrieved metrics for unit {mac} [{shutdown}]");
 
-                    let json = serde_json::to_vec(&data).unwrap();
+                    let mut buffer = String::from("data: ").into_bytes();
+                    serde_json::to_writer(&mut buffer, &data).unwrap();
                     drop(data);
-                    let json = Frame::data(Bytes::from(json));
+                    buffer.extend_from_slice(b"\n\n");
+                    let json = Frame::data(Bytes::from(buffer));
 
                     use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
                     let stream = BroadcastStream::new(self.tx.subscribe()).filter_map(move |res| {
-                        core::future::ready(match res {
-                            Ok(bytes) => {
-                                log::info!("session {sid} received a new data point live");
-                                Some(Frame::data(bytes))
-                            }
+                        use core::future::ready;
+                        let (addr, bytes) = match res {
+                            Ok(pair) => pair,
                             Err(BroadcastStreamRecvError::Lagged(val)) => {
-                                log::warn!("session {sid} lagged behind {val} messages in the broadcast channel");
-                                None
+                                log::warn!("session {sid} lagged behind {val} messages in the broadcast channel with capacity {}", Self::CAPACITY);
+                                return ready(None);
                             }
+                        };
+                        ready(if addr == mac {
+                            log::info!("session {sid} received a new data point live");
+                            Some(Frame::data(bytes))
+                        } else {
+                            log::trace!("session {sid} ignored data point from {addr}");
+                            None
                         })
                     });
 
@@ -186,12 +197,19 @@ impl Router {
                     let Flow { addr, flow: data } = flow;
                     log::info!("unit {addr} reported {data} ticks");
 
-                    let mut res = Response::new(Either::Left(Default::default()));
-                    *res.status_mut() = if self.db.report_flow(flow).await {
-                        StatusCode::SERVICE_UNAVAILABLE
+                    let (creation, shutdown) = self.db.report_flow(flow).await;
+                    let mut buffer = String::from("data: ").into_bytes();
+                    serde_json::to_writer(&mut buffer, &[ClientFlow { creation, flow: data.into() }]).unwrap();
+                    buffer.extend_from_slice(b"\n\n");
+
+                    if let Ok(receivers) = self.tx.send((addr, Bytes::from(buffer))) {
+                        log::trace!("unit {addr} notified {receivers} listeners");
                     } else {
-                        StatusCode::CREATED
-                    };
+                        log::trace!("no active listeners for unit {addr}");
+                    }
+
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
                     Ok(res)
                 }
                 "/report/leak" => {

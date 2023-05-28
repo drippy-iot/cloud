@@ -31,8 +31,7 @@ fn main() -> anyhow::Result<()> {
         let handle = rt.spawn(conn);
         log::info!("connected to the database");
 
-        let (tx, _) = tokio::sync::broadcast::channel(16);
-        let router = Router::new(tx, db);
+        let router = Router::new(db);
         loop {
             let res = tokio::select! {
                 accept_res = tcp.accept() => accept_res,

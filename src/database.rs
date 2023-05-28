@@ -1,11 +1,12 @@
+use crate::model::ClientFlow;
+
+use chrono::{DateTime, Utc};
+use futures_util::{Stream, StreamExt, TryStreamExt};
+use tokio_postgres::error::SqlState;
+
 pub use model::{report::Flow, MacAddress};
 pub use tokio_postgres::Client;
 pub use uuid::Uuid;
-
-use crate::model::ClientFlow;
-
-use futures_util::{Stream, StreamExt, TryStreamExt};
-use tokio_postgres::error::SqlState;
 
 pub struct Database {
     db: Client,
@@ -35,19 +36,22 @@ impl Database {
 
     /// Reports to the database the current water flow of the device.
     /// Returns the latest shutdown state of the unit.
-    pub async fn report_flow(&self, Flow { addr, flow }: Flow) -> bool {
+    pub async fn report_flow(&self, Flow { addr, flow }: Flow) -> (DateTime<Utc>, bool) {
         let flow = i16::try_from(flow).unwrap();
         let row = self
             .db
             .query_one(
-                "WITH _ AS (INSERT INTO status (mac, flow) VALUES ($1, $2) RETURNING mac), \
+                "WITH _ AS (INSERT INTO status (mac, flow) VALUES ($1, $2) RETURNING creation, mac), \
                 old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
-                UPDATE unit SET shutdown = DEFAULT FROM _, old WHERE unit.mac = _.mac RETURNING old.shutdown",
+                UPDATE unit SET shutdown = DEFAULT FROM _, old WHERE unit.mac = _.mac RETURNING _.creation, old.shutdown",
                 &[&addr, &flow],
             )
             .await
             .unwrap();
-        row.get(0)
+
+        let creation = row.get(0);
+        let shutdown = row.get(1);
+        (creation, shutdown)
     }
 
     /// Reports to the database a single instance of a leak detection.
