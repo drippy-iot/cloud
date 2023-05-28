@@ -52,8 +52,7 @@ fn main() -> anyhow::Result<()> {
             let router = router.clone();
             let svc = hyper::service::service_fn(move |req| {
                 use futures_util::FutureExt;
-                let router = router.clone();
-                router.handle(req).map(Ok::<_, core::convert::Infallible>)
+                router.clone().handle(req).map(Ok::<_, core::convert::Infallible>)
             });
             rt.spawn(http.serve_connection(stream, svc));
         }
