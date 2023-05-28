@@ -1,3 +1,4 @@
+use cloud::router::Router;
 use std::{
     env::var,
     net::{Ipv4Addr, TcpListener},
@@ -30,6 +31,7 @@ fn main() -> anyhow::Result<()> {
         let handle = rt.spawn(conn);
         log::info!("connected to the database");
 
+        let router = Router::new(db);
         loop {
             let res = tokio::select! {
                 accept_res = tcp.accept() => accept_res,
@@ -46,16 +48,15 @@ fn main() -> anyhow::Result<()> {
 
             log::info!("new connection from {other}");
 
-            let outer = db.clone();
+            let router = router.clone();
             let svc = hyper::service::service_fn(move |req| {
                 use futures_util::FutureExt;
-                let inner = outer.clone();
-                cloud::router::handle(inner, req).map(Ok::<_, core::convert::Infallible>)
+                router.clone().handle(req).map(Ok::<_, core::convert::Infallible>)
             });
             rt.spawn(http.serve_connection(stream, svc));
         }
 
-        drop(db);
+        drop(router);
         handle.await??;
         anyhow::Ok(())
     })?;

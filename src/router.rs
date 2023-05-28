@@ -1,17 +1,19 @@
-use crate::database::Database;
+use crate::{database::Database, model::ClientFlow};
 
-use alloc::sync::Arc;
+use alloc::{string::String, sync::Arc, vec::Vec};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use cookie::Cookie;
-use core::future::Future;
-use futures_util::{StreamExt, TryFutureExt};
-use http_body_util::{BodyExt, Full};
+use core::{convert::Infallible, future::Future};
+use futures_util::{FutureExt, Stream, StreamExt as _, TryFutureExt as _};
+use http_body_util::{BodyExt as _, Either, Full, StreamBody};
 use hyper::{
-    body::{Bytes, Incoming},
-    header::{COOKIE, LAST_MODIFIED, SET_COOKIE},
+    body::{Bytes, Frame, Incoming},
+    header::{CONTENT_TYPE, COOKIE, SET_COOKIE},
     http::{request::Parts, HeaderValue},
     HeaderMap, Method, Request, Response, StatusCode,
 };
 use model::{decode, report::Flow, MacAddress};
+use tokio::sync::broadcast::{channel, Sender};
 use uuid::Uuid;
 
 fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
@@ -26,180 +28,257 @@ fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
     })
 }
 
-fn extract_last_modified(headers: &HeaderMap) -> Option<chrono::DateTime<chrono::Utc>> {
-    let header = headers.get(LAST_MODIFIED)?.to_str().ok()?;
-    if header.is_empty() {
-        None
-    } else {
-        header.parse().ok()
-    }
+#[derive(Clone)]
+pub struct Router {
+    tx: Sender<(MacAddress, Bytes)>,
+    db: Arc<Database>,
 }
 
-async fn try_handle(db: Arc<Database>, req: Request<Incoming>) -> Result<Response<Full<Bytes>>, StatusCode> {
-    let (Parts { uri, method, headers, .. }, incoming) = req.into_parts();
-    let bytes = match incoming.collect().await {
-        Ok(body) => body.to_bytes(),
-        Err(err) => {
-            log::error!("{err}");
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
+impl Router {
+    /// Maximum capacity of the internal broadcast channel.
+    const CAPACITY: usize = 16;
 
-    match method {
-        Method::GET => match uri.path() {
-            "/auth/session" => {
-                let Some(sid) = extract_session_id(&headers) else {
-                    log::error!("absent session");
-                    return Err(StatusCode::UNAUTHORIZED);
-                };
+    pub fn new(db: Arc<Database>) -> Self {
+        let (tx, _) = channel(Self::CAPACITY);
+        Self { tx, db }
+    }
 
-                let Some((mac, shutdown)) = db.get_unit_from_session(sid).await else {
-                    log::error!("invalid session {sid}");
-                    return Err(StatusCode::UNAUTHORIZED);
-                };
-
-                let fmt = sid.simple();
-                log::info!("session {fmt} retrieved session details for unit {mac} [{shutdown}]");
-
-                let bytes = alloc::boxed::Box::<[_]>::from(mac.0);
-                let body = Full::new(Bytes::from(bytes));
-
-                let mut res = Response::new(body);
-                *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK };
-                Ok(res)
+    pub async fn try_handle(
+        self,
+        req: Request<Incoming>,
+    ) -> Result<Response<Either<Full<Bytes>, impl Stream<Item = Frame<Bytes>>>>, StatusCode> {
+        let (Parts { uri, method, headers, .. }, incoming) = req.into_parts();
+        let bytes = match incoming.collect().await {
+            Ok(body) => body.to_bytes(),
+            Err(err) => {
+                log::error!("{err}");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
-            "/api/metrics" => {
-                use alloc::vec::Vec;
+        };
 
-                let Some(last_modified) = extract_last_modified(&headers) else {
-                    log::error!("something wrong with the parsing");
-                    return Err(StatusCode::BAD_REQUEST);
-                };
+        match method {
+            Method::GET => match uri.path() {
+                "/auth/session" => {
+                    let Some(sid) = extract_session_id(&headers) else {
+                        log::error!("absent session");
+                        return Err(StatusCode::UNAUTHORIZED);
+                    };
 
-                let Some(sid) = extract_session_id(&headers) else {
-                    log::error!("absent session");
-                    return Err(StatusCode::UNAUTHORIZED);
-                };
+                    let Some((mac, shutdown)) = self.db.get_unit_from_session(sid).await else {
+                        log::error!("invalid session {sid}");
+                        return Err(StatusCode::UNAUTHORIZED);
+                    };
 
-                let Some((mac, shutdown)) = db.get_unit_from_session(sid).await else {
-                    log::error!("invalid session {sid}");
-                    return Err(StatusCode::UNAUTHORIZED);
-                };
+                    let fmt = sid.simple();
+                    log::info!("session {fmt} retrieved session details for unit {mac} [{shutdown}]");
 
-                let fmt = sid.simple();
-                log::info!("session {fmt} retrieved metrics for unit {mac} [{shutdown}]");
+                    let bytes = alloc::boxed::Box::<[_]>::from(mac.0);
+                    let body = Either::Left(Full::new(Bytes::from(bytes)));
 
-                let data: Vec<_> = db.get_flows(mac, last_modified).await.collect().await;
-                let json = serde_json::to_vec(&data).unwrap();
-                let body = Full::new(Bytes::from(json));
-
-                let mut res = Response::new(body);
-                *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK };
-                Ok(res)
-            }
-            path => {
-                log::error!("unexpected request to GET {path}");
-                Err(StatusCode::NOT_FOUND)
-            }
-        },
-        Method::POST => match uri.path() {
-            "/api/shutdown" => {
-                let Some(sid) = extract_session_id(&headers) else {
-                    log::error!("absent session");
-                    return Err(StatusCode::UNAUTHORIZED);
-                };
-
-                let fmt = sid.simple();
-                let Some((mac, _)) = db.get_unit_from_session(sid).await else {
-                    log::error!("invalid session {fmt}");
-                    return Err(StatusCode::UNAUTHORIZED);
-                };
-
-                let mut res = Response::default();
-                *res.status_mut() = if db.request_shutdown(mac).await { StatusCode::ACCEPTED } else { StatusCode::OK };
-                log::info!("session {fmt} requested shutdown of unit {mac}");
-                Ok(res)
-            }
-            "/auth/session" => {
-                if bytes.len() < 6 {
-                    log::error!("provided a MAC address that is too short");
-                    return Err(StatusCode::BAD_REQUEST);
+                    let mut res = Response::new(body);
+                    *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK };
+                    Ok(res)
                 }
+                "/api/metrics" => {
+                    let Some(query) = uri.query() else {
+                        log::error!("query string is absent");
+                        return Err(StatusCode::BAD_REQUEST);
+                    };
 
-                let mut mac = MacAddress([0; 6]);
-                mac.0.copy_from_slice(&bytes[..6]);
+                    let Some(start) = query.split('&').find_map(|pair| {
+                        let (key, value) = pair.split_once('=')?;
+                        if key != "start" {
+                            return None;
+                        }
+                        let millis = value.parse().ok()?;
+                        let datetime = NaiveDateTime::from_timestamp_millis(millis)?;
+                        Some(DateTime::from_utc(datetime, Utc))
+                    }) else {
+                        log::error!("query did not contain a valid timestamp");
+                        return Err(StatusCode::BAD_REQUEST);
+                    };
 
-                let Some(uuid) = db.create_session(mac).await else {
-                    log::error!("cannot create session because unit {mac} does not exist yet");
-                    return Err(StatusCode::NOT_FOUND);
-                };
+                    let Some(sid) = extract_session_id(&headers) else {
+                        log::error!("absent session");
+                        return Err(StatusCode::UNAUTHORIZED);
+                    };
 
-                let fmt = uuid.simple();
-                log::info!("created new session {fmt} for unit {mac}");
+                    let Some((mac, shutdown)) = self.db.get_unit_from_session(sid).await else {
+                        log::error!("invalid session {sid}");
+                        return Err(StatusCode::UNAUTHORIZED);
+                    };
 
-                let cookie = alloc::format!("sid={fmt}; HttpOnly; SameSite=None; Secure");
-                let cookie = HeaderValue::from_str(&cookie).unwrap();
+                    let data: Vec<_> = self.db.get_flows(mac, start).await.collect().await;
+                    let fmt = sid.simple();
+                    log::info!("session {fmt} retrieved metrics for unit {mac} [{shutdown}]");
 
-                let mut res = Response::default();
-                res.headers_mut().insert(SET_COOKIE, cookie);
-                *res.status_mut() = StatusCode::CREATED;
-                Ok(res)
+                    let mut buffer = String::from("data: ").into_bytes();
+                    serde_json::to_writer(&mut buffer, &data).unwrap();
+                    drop(data);
+                    buffer.extend_from_slice(b"\n\n");
+                    let json = Frame::data(Bytes::from(buffer));
+
+                    use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
+                    let stream = BroadcastStream::new(self.tx.subscribe()).filter_map(move |res| {
+                        use core::future::ready;
+                        let (addr, bytes) = match res {
+                            Ok(pair) => pair,
+                            Err(BroadcastStreamRecvError::Lagged(val)) => {
+                                log::warn!("session {sid} lagged behind {val} messages in the broadcast channel with capacity {}", Self::CAPACITY);
+                                return ready(None);
+                            }
+                        };
+                        ready(if addr == mac {
+                            log::info!("session {sid} received a new data point live");
+                            Some(Frame::data(bytes))
+                        } else {
+                            log::trace!("session {sid} ignored data point from {addr}");
+                            None
+                        })
+                    });
+
+                    let stream = tokio_stream::once(json).chain(stream);
+                    let body = Either::Right(StreamBody::new(stream));
+
+                    let mut res = Response::new(body);
+                    res.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+                    Ok(res)
+                }
+                path => {
+                    log::error!("unexpected request to GET {path}");
+                    Err(StatusCode::NOT_FOUND)
+                }
+            },
+            Method::POST => match uri.path() {
+                "/api/shutdown" => {
+                    let Some(sid) = extract_session_id(&headers) else {
+                        log::error!("absent session");
+                        return Err(StatusCode::UNAUTHORIZED);
+                    };
+
+                    let fmt = sid.simple();
+                    let Some((mac, _)) = self.db.get_unit_from_session(sid).await else {
+                        log::error!("invalid session {fmt}");
+                        return Err(StatusCode::UNAUTHORIZED);
+                    };
+
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    *res.status_mut() =
+                        if self.db.request_shutdown(mac).await { StatusCode::ACCEPTED } else { StatusCode::OK };
+                    log::info!("session {fmt} requested shutdown of unit {mac}");
+                    Ok(res)
+                }
+                "/auth/session" => {
+                    if bytes.len() < 6 {
+                        log::error!("provided a MAC address that is too short");
+                        return Err(StatusCode::BAD_REQUEST);
+                    }
+
+                    let mut mac = MacAddress([0; 6]);
+                    mac.0.copy_from_slice(&bytes[..6]);
+
+                    let Some(uuid) = self.db.create_session(mac).await else {
+                        log::error!("cannot create session because unit {mac} does not exist yet");
+                        return Err(StatusCode::NOT_FOUND);
+                    };
+
+                    let fmt = uuid.simple();
+                    log::info!("created new session {fmt} for unit {mac}");
+
+                    let cookie = alloc::format!("sid={fmt}; HttpOnly; SameSite=None; Secure");
+                    let cookie = HeaderValue::from_str(&cookie).unwrap();
+
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    res.headers_mut().insert(SET_COOKIE, cookie);
+                    *res.status_mut() = StatusCode::CREATED;
+                    Ok(res)
+                }
+                "/report/flow" => {
+                    let Ok(flow) = decode::<Flow>(&bytes) else {
+                        log::error!("malformed water flow reported");
+                        return Err(StatusCode::BAD_REQUEST);
+                    };
+
+                    let Flow { addr, flow: data } = flow;
+                    log::info!("unit {addr} reported {data} ticks");
+
+                    let (creation, shutdown) = self.db.report_flow(flow).await;
+                    let mut buffer = String::from("data: ").into_bytes();
+                    serde_json::to_writer(&mut buffer, &[ClientFlow { creation, flow: data.into() }]).unwrap();
+                    buffer.extend_from_slice(b"\n\n");
+
+                    if let Ok(receivers) = self.tx.send((addr, Bytes::from(buffer))) {
+                        log::trace!("unit {addr} notified {receivers} listeners");
+                    } else {
+                        log::trace!("no active listeners for unit {addr}");
+                    }
+
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
+                    Ok(res)
+                }
+                "/report/leak" => {
+                    let Ok(mac) = decode::<MacAddress>(&bytes) else {
+                        log::error!("malformed leak reported");
+                        return Err(StatusCode::BAD_REQUEST);
+                    };
+
+                    log::warn!("leak detected from {mac}");
+
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    *res.status_mut() = if self.db.report_leak(mac).await {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    } else {
+                        StatusCode::CREATED
+                    };
+
+                    Ok(res)
+                }
+                "/report/register" => {
+                    let Ok(mac) = decode::<MacAddress>(&bytes) else {
+                        log::error!("malformed MAC registration");
+                        return Err(StatusCode::BAD_REQUEST);
+                    };
+
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    *res.status_mut() = if self.db.register_unit(mac).await {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    } else {
+                        StatusCode::CREATED
+                    };
+                    log::info!("unit {mac} registered");
+                    Ok(res)
+                }
+                path => {
+                    log::error!("unexpected request to POST {path}");
+                    Err(StatusCode::NOT_FOUND)
+                }
+            },
+            method => {
+                log::error!("unexpected {method} method received");
+                Err(StatusCode::METHOD_NOT_ALLOWED)
             }
-            "/report/flow" => {
-                let Ok(flow) = decode::<Flow>(&bytes) else {
-                    log::error!("malformed water flow reported");
-                    return Err(StatusCode::BAD_REQUEST);
-                };
-
-                let Flow { addr, flow: data } = flow;
-                log::info!("unit {addr} reported {data} ticks");
-
-                let mut res = Response::default();
-                *res.status_mut() =
-                    if db.report_flow(flow).await { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
-                Ok(res)
-            }
-            "/report/leak" => {
-                let Ok(mac) = decode::<MacAddress>(&bytes) else {
-                    log::error!("malformed leak reported");
-                    return Err(StatusCode::BAD_REQUEST);
-                };
-
-                log::warn!("leak detected from {mac}");
-
-                let mut res = Response::default();
-                *res.status_mut() =
-                    if db.report_leak(mac).await { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
-                Ok(res)
-            }
-            "/report/register" => {
-                let Ok(mac) = decode::<MacAddress>(&bytes) else {
-                    log::error!("malformed MAC registration");
-                    return Err(StatusCode::BAD_REQUEST);
-                };
-
-                let mut res = Response::default();
-                *res.status_mut() =
-                    if db.register_unit(mac).await { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
-                log::info!("unit {mac} registered");
-                Ok(res)
-            }
-            path => {
-                log::error!("unexpected request to POST {path}");
-                Err(StatusCode::NOT_FOUND)
-            }
-        },
-        method => {
-            log::error!("unexpected {method} method received");
-            Err(StatusCode::METHOD_NOT_ALLOWED)
         }
     }
-}
 
-pub fn handle(db: Arc<Database>, req: Request<Incoming>) -> impl Future<Output = Response<Full<Bytes>>> {
-    try_handle(db, req).unwrap_or_else(|code| {
-        let mut res = Response::default();
-        *res.status_mut() = code;
-        res
-    })
+    pub fn handle(
+        self,
+        req: Request<Incoming>,
+    ) -> impl Future<Output = Response<Either<Full<Bytes>, StreamBody<impl Stream<Item = Result<Frame<Bytes>, Infallible>>>>>>
+    {
+        self.try_handle(req)
+            .unwrap_or_else(|code| {
+                let mut res = Response::new(Either::Left(Default::default()));
+                *res.status_mut() = code;
+                res
+            })
+            .map(|res| {
+                let (parts, body) = res.into_parts();
+                let body = match body {
+                    Either::Left(body) => Either::Left(body),
+                    Either::Right(stream) => Either::Right(StreamBody::new(stream.map(Ok::<_, Infallible>))),
+                };
+                Response::from_parts(parts, body)
+            })
+    }
 }

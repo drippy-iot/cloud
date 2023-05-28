@@ -3,6 +3,9 @@ name = "cloud"
 version = "0.1.0"
 edition = "2021"
 
+[profile.release]
+lto = true
+
 [dependencies]
 anyhow = "1"
 bitcode = "0.4"
@@ -49,6 +52,11 @@ default-features = false
 [dependencies.tokio-postgres]
 version = "0.7"
 features = ["with-uuid-1", "with-chrono-0_4"]
+
+[dependencies.tokio-stream]
+version = "0.1"
+features = ["sync"]
+default-features = false
 
 [dependencies.uuid]
 version = "1.3"
