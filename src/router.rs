@@ -1,6 +1,9 @@
-use crate::{database::Database, model::ClientFlow};
+use crate::{
+    database::Database,
+    model::{Header, Message, Payload},
+};
 
-use alloc::{string::String, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use cookie::Cookie;
 use core::{convert::Infallible, future::Future};
@@ -72,7 +75,7 @@ impl Router {
                     let fmt = sid.simple();
                     log::info!("session {fmt} retrieved session details for unit {mac} [{shutdown}]");
 
-                    let bytes = alloc::boxed::Box::<[_]>::from(mac.0);
+                    let bytes = Box::<[_]>::from(mac.0);
                     let body = Either::Left(Full::new(Bytes::from(bytes)));
 
                     let mut res = Response::new(body);
@@ -203,8 +206,11 @@ impl Router {
                     log::info!("unit {addr} reported {data} ticks");
 
                     let (creation, shutdown) = self.db.report_flow(flow).await;
+                    let message =
+                        Message { head: Header { mac: None, timestamp: creation }, data: Payload::Flow { flow: data } };
+
                     let mut buffer = String::from("data: ").into_bytes();
-                    serde_json::to_writer(&mut buffer, &[ClientFlow { creation, flow: data.into() }]).unwrap();
+                    serde_json::to_writer(&mut buffer, &message).unwrap();
                     buffer.extend_from_slice(b"\n\n");
 
                     if let Ok(receivers) = self.tx.send((addr, Bytes::from(buffer))) {
