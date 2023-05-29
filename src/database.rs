@@ -175,6 +175,7 @@ impl Database {
             )
             .await
             .unwrap();
-        row.get(0)
+        let val = row.get(0);
+        serde_json::from_value(val).unwrap()
     }
 }

@@ -12,13 +12,11 @@ pub enum Payload {
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct Message<Header> {
-    pub head: Header,
+pub struct UserMessage {
+    pub creation: DateTime<Utc>,
     #[serde(flatten)]
     pub data: Payload,
 }
-
-pub type UserMessage = Message<DateTime<Utc>>;
 
 impl<'a> FromSql<'a> for UserMessage {
     fn from_sql(ty: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {

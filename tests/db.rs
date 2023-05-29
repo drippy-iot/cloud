@@ -71,6 +71,11 @@ async fn database_tests() -> anyhow::Result<()> {
     assert!(start < creation);
     assert!(shutdown);
 
+    // Get all timestamp since the start of these tests
+    let metrics = db.get_metrics_since(addr, start).await.into_boxed_slice();
+    assert_eq!(metrics.len(), 14);
+
+    // Test user login flow
     let id = db.create_session(addr).await.unwrap();
     let (other, shutdown) = db.get_unit_from_session(id).await.unwrap();
     assert_eq!(addr, other);
