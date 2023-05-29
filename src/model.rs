@@ -13,6 +13,7 @@ pub enum Payload {
 
 #[derive(Deserialize, Serialize)]
 pub struct UserMessage {
+    #[serde(rename(serialize = "ts"))]
     pub creation: DateTime<Utc>,
     #[serde(flatten)]
     pub data: Payload,
