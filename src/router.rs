@@ -1,9 +1,8 @@
 use crate::{
     database::Database,
-    model::{UserMessage, Payload},
+    model::{Payload, UserMessage},
 };
 
-use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use cookie::Cookie;
 use core::{convert::Infallible, future::Future};
@@ -17,6 +16,7 @@ use hyper::{
 };
 use model::{decode, report::Flow, MacAddress};
 use serde::Serialize;
+use std::sync::Arc;
 use tokio::sync::broadcast::{channel, Sender};
 use uuid::Uuid;
 
@@ -227,7 +227,7 @@ impl Router {
                     let fmt = uuid.simple();
                     log::info!("created new session {fmt} for unit {mac}");
 
-                    let cookie = alloc::format!("sid={fmt}; HttpOnly; SameSite=None; Secure");
+                    let cookie = format!("sid={fmt}; HttpOnly; SameSite=None; Secure");
                     let cookie = HeaderValue::from_str(&cookie).unwrap();
 
                     let mut res = Response::new(Either::Left(Default::default()));

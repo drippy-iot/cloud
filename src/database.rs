@@ -1,4 +1,4 @@
-use crate::model::ClientFlow;
+use crate::model::{ClientFlow, UserMessage};
 
 use chrono::{DateTime, Utc};
 use futures_util::{Stream, StreamExt, TryStreamExt};
@@ -161,7 +161,7 @@ impl Database {
             .map(Result::unwrap)
     }
 
-    pub async fn get_metrics_since(&self, mac: MacAddress, since: DateTime<Utc>) {
+    pub async fn get_metrics_since(&self, mac: MacAddress, since: DateTime<Utc>) -> Vec<UserMessage> {
         let row = self.db
             .query_one(
                 "WITH _ AS (\
@@ -175,6 +175,6 @@ impl Database {
             )
             .await
             .unwrap();
-        let jsons = row.get(0);
+        row.get(0)
     }
 }
