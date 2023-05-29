@@ -1,21 +1,24 @@
 CREATE EXTENSION pgcrypto;
 
+-- A single ESP32 unit uniquely identified by its MAC address.
 CREATE TABLE unit(
     mac MACADDR NOT NULL,
     shutdown BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (mac)
 );
 
-CREATE TABLE status(
+-- Snapshots of the flow rate (ticks per second).
+CREATE TABLE flow(
     mac MACADDR NOT NULL,
     creation TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     flow SMALLINT NOT NULL,
     PRIMARY KEY (mac, creation),
-    CONSTRAINT "FK_status.mac"
+    CONSTRAINT "FK_flow.mac"
         FOREIGN KEY (mac)
         REFERENCES unit (mac)
 );
 
+-- Snapshots of the leak events.
 CREATE TABLE leak(
     mac MACADDR NOT NULL,
     creation TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -25,26 +28,19 @@ CREATE TABLE leak(
         REFERENCES unit (mac)
 );
 
-CREATE TABLE push(
+-- Snapshots of the control requests (i.e., shutdown and reset).
+CREATE TABLE control(
     mac MACADDR NOT NULL,
-    endpoint VARCHAR(1024) NOT NULL,
-    auth BYTEA NOT NULL,
-    p256dh BYTEA NOT NULL,
-    PRIMARY KEY (mac, endpoint),
-    CONSTRAINT "FK_push.mac"
+    creation TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- TRUE if shutdown request and FALSE if reset request.
+    shutdown BOOLEAN NOT NULL,
+    PRIMARY KEY (mac, creation),
+    CONSTRAINT "FK_control.mac"
         FOREIGN KEY (mac)
         REFERENCES unit (mac)
 );
 
-CREATE TABLE sms(
-    mac MACADDR NOT NULL,
-    phone VARCHAR(16) NOT NULL,
-    PRIMARY KEY (mac, phone),
-    CONSTRAINT "FK_sms.mac"
-        FOREIGN KEY (mac)
-        REFERENCES unit (mac)
-);
-
+-- Mapping of session IDs to the associated MAC addresses.
 CREATE TABLE session(
     id UUID NOT NULL DEFAULT gen_random_uuid(),
     mac MACADDR NOT NULL,
