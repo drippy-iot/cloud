@@ -166,8 +166,8 @@ impl Router {
                     };
 
                     let mut res = Response::new(Either::Left(Default::default()));
-                    *res.status_mut() =
-                        if self.db.request_shutdown(mac).await { StatusCode::ACCEPTED } else { StatusCode::OK };
+                    let (creation, shutdown) = self.db.request_shutdown(mac).await;
+                    *res.status_mut() = if shutdown { StatusCode::ACCEPTED } else { StatusCode::OK };
                     log::info!("session {fmt} requested shutdown of unit {mac}");
                     Ok(res)
                 }
@@ -232,11 +232,8 @@ impl Router {
                     log::warn!("leak detected from {mac}");
 
                     let mut res = Response::new(Either::Left(Default::default()));
-                    *res.status_mut() = if self.db.report_leak(mac).await {
-                        StatusCode::SERVICE_UNAVAILABLE
-                    } else {
-                        StatusCode::CREATED
-                    };
+                    let (creation, shutdown) = self.db.report_leak(mac).await;
+                    *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
 
                     Ok(res)
                 }

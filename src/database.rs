@@ -56,33 +56,59 @@ impl Database {
 
     /// Reports to the database a single instance of a leak detection.
     /// Returns the latest shutdown state of the unit.
-    pub async fn report_leak(&self, mac: MacAddress) -> bool {
+    pub async fn report_leak(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
         let row = self
             .db
             .query_one(
-                "WITH _ AS (INSERT INTO leak (mac) VALUES ($1) RETURNING mac), \
+                "WITH _ AS (INSERT INTO leak (mac) VALUES ($1) RETURNING creation, mac), \
                 old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
-                UPDATE unit SET shutdown = FALSE FROM _, old WHERE unit.mac = _.mac RETURNING old.shutdown",
+                UPDATE unit SET shutdown = FALSE FROM _, old WHERE unit.mac = _.mac RETURNING _.creation, old.shutdown",
                 &[&mac],
             )
             .await
             .unwrap();
-        row.get(0)
+
+        let creation = row.get(0);
+        let shutdown = row.get(1);
+        (creation, shutdown)
     }
 
     /// Sets the shutdown flag for the unit associated with the given
     /// MAC address. Returns the previously set value for the flag.
-    pub async fn request_shutdown(&self, mac: MacAddress) -> bool {
+    pub async fn request_shutdown(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
         let row = self
             .db
             .query_one(
-                "WITH _ AS (SELECT mac, shutdown FROM unit WHERE mac = $1) \
-                UPDATE unit SET shutdown = TRUE FROM _ WHERE unit.mac = _.mac RETURNING _.shutdown",
+                "WITH _ AS (INSERT INTO control (mac, shutdown) VALUES ($1, TRUE) RETURNING creation, mac, shutdown), \
+                old AS (SELECT mac, shutdown FROM _ INNER JOIN unit USING (mac)) \
+                UPDATE unit SET shutdown = _.shutdown FROM _, old WHERE unit.mac = old.mac RETURNING (_.creation, old.shutdown)",
                 &[&mac],
             )
             .await
             .unwrap();
-        row.get(0)
+
+        let creation = row.get(0);
+        let shutdown = row.get(1);
+        (creation, shutdown)
+    }
+
+    /// Resets the shutdown flag for the unit associated with the given
+    /// MAC address. Returns the previously set value for the flag.
+    pub async fn request_reset(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
+        let row = self
+            .db
+            .query_one(
+                "WITH _ AS (INSERT INTO control (mac, shutdown) VALUES ($1, FALSE) RETURNING creation, mac, shutdown), \
+                old AS (SELECT mac, shutdown FROM _ INNER JOIN unit USING (mac)) \
+                UPDATE unit SET shutdown = _.shutdown FROM _, old WHERE unit.mac = old.mac RETURNING (_.creation, old.shutdown)",
+                &[&mac],
+            )
+            .await
+            .unwrap();
+
+        let creation = row.get(0);
+        let shutdown = row.get(1);
+        (creation, shutdown)
     }
 
     /// Creates a new session from the given address. If the MAC address had not been previously
@@ -117,11 +143,7 @@ impl Database {
     }
 
     /// Fetches a stream of [`ClientFlow`] (given a [`chrono::DateTime`] and the [`MacAddress`]) from the database.
-    pub async fn get_flows(
-        &self,
-        mac: MacAddress,
-        start: DateTime<Utc>,
-    ) -> impl Stream<Item = ClientFlow> {
+    pub async fn get_flows(&self, mac: MacAddress, start: DateTime<Utc>) -> impl Stream<Item = ClientFlow> {
         use tokio_postgres::types::ToSql;
         self.db
             .query_raw(
