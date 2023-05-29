@@ -1,6 +1,6 @@
 use crate::{
     database::Database,
-    model::{Header, Message, Payload},
+    model::{UserMessage, Payload},
 };
 
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
@@ -170,8 +170,7 @@ impl Router {
 
                     let mut res = Response::new(Either::Left(Default::default()));
                     let (timestamp, shutdown) = self.db.request_shutdown(mac).await;
-                    let message =
-                        Message { head: Header { mac: None, timestamp }, data: Payload::Control { shutdown: true } };
+                    let message = UserMessage { head: timestamp, data: Payload::Control { shutdown: true } };
                     let json = to_sse_message(&message).unwrap();
 
                     if let Ok(receivers) = self.tx.send((mac, json)) {
@@ -198,8 +197,7 @@ impl Router {
 
                     let mut res = Response::new(Either::Left(Default::default()));
                     let (timestamp, shutdown) = self.db.request_reset(mac).await;
-                    let message =
-                        Message { head: Header { mac: None, timestamp }, data: Payload::Control { shutdown: false } };
+                    let message = UserMessage { head: timestamp, data: Payload::Control { shutdown: false } };
                     let json = to_sse_message(&message).unwrap();
 
                     if let Ok(receivers) = self.tx.send((mac, json)) {
@@ -247,7 +245,7 @@ impl Router {
                     log::info!("unit {addr} reported {data} ticks");
 
                     let (timestamp, shutdown) = self.db.report_flow(flow).await;
-                    let message = Message { head: Header { mac: None, timestamp }, data: Payload::Flow { flow: data } };
+                    let message = UserMessage { head: timestamp, data: Payload::Flow { flow: data } };
                     let json = to_sse_message(&message).unwrap();
 
                     if let Ok(receivers) = self.tx.send((addr, json)) {
@@ -269,7 +267,7 @@ impl Router {
                     log::warn!("leak detected from {mac}");
 
                     let (timestamp, shutdown) = self.db.report_leak(mac).await;
-                    let message = Message { head: Header { mac: None, timestamp }, data: Payload::Leak };
+                    let message = UserMessage { head: timestamp, data: Payload::Leak };
                     let json = to_sse_message(&message).unwrap();
 
                     if let Ok(receivers) = self.tx.send((mac, json)) {
