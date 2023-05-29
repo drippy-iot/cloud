@@ -63,6 +63,14 @@ async fn database_tests() -> anyhow::Result<()> {
     assert!(start < creation);
     assert!(!shutdown);
 
+    // Reset from a remote shutdown
+    let (creation, shutdown) = db.request_shutdown(addr).await;
+    assert!(start < creation);
+    assert!(!shutdown);
+    let (creation, shutdown) = db.request_reset(addr).await;
+    assert!(start < creation);
+    assert!(shutdown);
+
     let id = db.create_session(addr).await.unwrap();
     let (other, shutdown) = db.get_unit_from_session(id).await.unwrap();
     assert_eq!(addr, other);
