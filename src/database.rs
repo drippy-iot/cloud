@@ -160,4 +160,21 @@ impl Database {
             .into_stream()
             .map(Result::unwrap)
     }
+
+    pub async fn get_metrics_since(&self, mac: MacAddress, since: DateTime<Utc>) {
+        let row = self.db
+            .query_one(
+                "WITH _ AS (\
+                    SELECT 'flow' AS ty, mac, creation, flow, NULL::BOOLEAN AS shutdown FROM flow \
+                        UNION ALL \
+                    SELECT 'leak' AS ty, mac, creation, NULL AS flow, NULL AS shutdown FROM leak \
+                        UNION ALL \
+                    SELECT 'control' AS ty, mac, creation, NULL AS flow, shutdown FROM control\
+                ) SELECT coalesce(json_strip_nulls(json_agg(_)), '[]') AS items FROM _ WHERE mac = $1 AND creation > $2",
+                &[&mac, &since],
+            )
+            .await
+            .unwrap();
+        let jsons = row.get(0);
+    }
 }

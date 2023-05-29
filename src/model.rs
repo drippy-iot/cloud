@@ -1,6 +1,6 @@
 use chrono::{serde::ts_milliseconds, DateTime, Utc};
 use model::MacAddress;
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 fn mac_to_int<S: Serializer>(mac: &Option<MacAddress>, serializer: S) -> Result<S::Ok, S::Error> {
     if let Some(MacAddress([a, b, c, d, e, f])) = *mac {
@@ -11,7 +11,7 @@ fn mac_to_int<S: Serializer>(mac: &Option<MacAddress>, serializer: S) -> Result<
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Header {
     /// MAC address to which the metrics is associated with.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -21,17 +21,16 @@ pub struct Header {
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[serde(tag = "ty")]
 pub enum Payload {
     Flow { flow: u16 },
+    Control { shutdown: bool },
     Leak,
-    Shutdown,
-    Reset,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Message {
     pub head: Header,
     pub data: Payload,

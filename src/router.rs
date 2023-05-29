@@ -170,7 +170,8 @@ impl Router {
 
                     let mut res = Response::new(Either::Left(Default::default()));
                     let (timestamp, shutdown) = self.db.request_shutdown(mac).await;
-                    let message = Message { head: Header { mac: None, timestamp }, data: Payload::Shutdown };
+                    let message =
+                        Message { head: Header { mac: None, timestamp }, data: Payload::Control { shutdown: true } };
                     let json = to_sse_message(&message).unwrap();
 
                     if let Ok(receivers) = self.tx.send((mac, json)) {
@@ -197,7 +198,8 @@ impl Router {
 
                     let mut res = Response::new(Either::Left(Default::default()));
                     let (timestamp, shutdown) = self.db.request_reset(mac).await;
-                    let message = Message { head: Header { mac: None, timestamp }, data: Payload::Reset };
+                    let message =
+                        Message { head: Header { mac: None, timestamp }, data: Payload::Control { shutdown: false } };
                     let json = to_sse_message(&message).unwrap();
 
                     if let Ok(receivers) = self.tx.send((mac, json)) {
