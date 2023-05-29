@@ -1,7 +1,6 @@
-use crate::model::{ClientFlow, UserMessage};
+use crate::model::UserMessage;
 
 use chrono::{DateTime, Utc};
-use futures_util::{Stream, StreamExt, TryStreamExt};
 use tokio_postgres::error::SqlState;
 
 pub use model::{report::Flow, MacAddress};
@@ -142,25 +141,7 @@ impl Database {
         Some((mac, shutdown))
     }
 
-    /// Fetches a stream of [`ClientFlow`] (given a [`chrono::DateTime`] and the [`MacAddress`]) from the database.
-    pub async fn get_flows(&self, mac: MacAddress, start: DateTime<Utc>) -> impl Stream<Item = ClientFlow> {
-        use tokio_postgres::types::ToSql;
-        self.db
-            .query_raw(
-                "SELECT creation, flow FROM flow WHERE mac = $1 AND creation > $2",
-                [&mac as &(dyn ToSql + Sync), &start as _],
-            )
-            .await
-            .unwrap()
-            .map_ok(|row| {
-                let creation = row.get(0);
-                let data: i16 = row.get(1);
-                ClientFlow { creation, flow: data.try_into().unwrap() }
-            })
-            .into_stream()
-            .map(Result::unwrap)
-    }
-
+    /// Get a unified [`Vec`] of [`UserMessage`] JSON objects.
     pub async fn get_metrics_since(&self, mac: MacAddress, since: DateTime<Utc>) -> Vec<UserMessage> {
         let row = self.db
             .query_one(

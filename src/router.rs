@@ -119,10 +119,11 @@ impl Router {
                         return Err(StatusCode::UNAUTHORIZED);
                     };
 
-                    let data: Vec<_> = self.db.get_flows(mac, start).await.collect().await;
+                    let data = self.db.get_metrics_since(mac, start).await.into_boxed_slice();
                     let fmt = sid.simple();
                     log::info!("session {fmt} retrieved metrics for unit {mac} [{shutdown}]");
                     let json = Frame::data(to_sse_message(&data).unwrap());
+                    drop(data);
 
                     use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
                     let stream = BroadcastStream::new(self.tx.subscribe()).filter_map(move |res| {
