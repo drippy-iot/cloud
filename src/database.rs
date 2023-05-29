@@ -41,7 +41,7 @@ impl Database {
         let row = self
             .db
             .query_one(
-                "WITH _ AS (INSERT INTO status (mac, flow) VALUES ($1, $2) RETURNING creation, mac), \
+                "WITH _ AS (INSERT INTO flow (mac, flow) VALUES ($1, $2) RETURNING creation, mac), \
                 old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
                 UPDATE unit SET shutdown = DEFAULT FROM _, old WHERE unit.mac = _.mac RETURNING _.creation, old.shutdown",
                 &[&addr, &flow],
@@ -80,8 +80,8 @@ impl Database {
             .db
             .query_one(
                 "WITH _ AS (INSERT INTO control (mac, shutdown) VALUES ($1, TRUE) RETURNING creation, mac, shutdown), \
-                old AS (SELECT mac, shutdown FROM _ INNER JOIN unit USING (mac)) \
-                UPDATE unit SET shutdown = _.shutdown FROM _, old WHERE unit.mac = old.mac RETURNING (_.creation, old.shutdown)",
+                old AS (SELECT mac, unit.shutdown FROM _ INNER JOIN unit USING (mac)) \
+                UPDATE unit SET shutdown = _.shutdown FROM _, old WHERE unit.mac = old.mac RETURNING _.creation, old.shutdown",
                 &[&mac],
             )
             .await
@@ -99,8 +99,8 @@ impl Database {
             .db
             .query_one(
                 "WITH _ AS (INSERT INTO control (mac, shutdown) VALUES ($1, FALSE) RETURNING creation, mac, shutdown), \
-                old AS (SELECT mac, shutdown FROM _ INNER JOIN unit USING (mac)) \
-                UPDATE unit SET shutdown = _.shutdown FROM _, old WHERE unit.mac = old.mac RETURNING (_.creation, old.shutdown)",
+                old AS (SELECT mac, unit.shutdown FROM _ INNER JOIN unit USING (mac)) \
+                UPDATE unit SET shutdown = _.shutdown FROM _, old WHERE unit.mac = old.mac RETURNING _.creation, old.shutdown",
                 &[&mac],
             )
             .await
@@ -147,7 +147,7 @@ impl Database {
         use tokio_postgres::types::ToSql;
         self.db
             .query_raw(
-                "SELECT creation, flow FROM status WHERE mac = $1 AND creation > $2",
+                "SELECT creation, flow FROM flow WHERE mac = $1 AND creation > $2",
                 [&mac as &(dyn ToSql + Sync), &start as _],
             )
             .await

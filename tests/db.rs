@@ -22,24 +22,24 @@ async fn database_tests() -> anyhow::Result<()> {
     assert!(!db.register_unit(mac).await); // existing registration
 
     // Ping water flow thrice; no shutdown requests must occur
-    assert!(!db.report_flow(Flow { addr: mac, flow: 50 }).await);
-    assert!(!db.report_flow(Flow { addr: mac, flow: 78 }).await);
-    assert!(!db.report_flow(Flow { addr: mac, flow: 100 }).await);
+    assert!(!db.report_flow(Flow { addr: mac, flow: 50 }).await.1);
+    assert!(!db.report_flow(Flow { addr: mac, flow: 78 }).await.1);
+    assert!(!db.report_flow(Flow { addr: mac, flow: 100 }).await.1);
 
     // Report leaks thrice; no shutdown requests must occur
-    assert!(!db.report_leak(mac).await);
-    assert!(!db.report_leak(mac).await);
-    assert!(!db.report_leak(mac).await);
+    assert!(!db.report_leak(mac).await.1);
+    assert!(!db.report_leak(mac).await.1);
+    assert!(!db.report_leak(mac).await.1);
 
     // Request shutdown when reporting water flow
-    assert!(!db.request_shutdown(mac).await);                    // request
-    assert!(db.report_flow(Flow { addr: mac, flow: 50 }).await); // acknowledge & reset
-    assert!(!db.report_flow(Flow { addr: mac, flow: 0 }).await); // proceed
+    assert!(!db.request_shutdown(mac).await.1);                    // request
+    assert!(db.report_flow(Flow { addr: mac, flow: 50 }).await.1); // acknowledge & reset
+    assert!(!db.report_flow(Flow { addr: mac, flow: 0 }).await.1); // proceed
 
     // Request shutdown when reporting leaks
-    assert!(!db.request_shutdown(mac).await); // request
-    assert!(db.report_leak(mac).await);       // acknowledge & reset
-    assert!(!db.report_leak(mac).await);      // proceed
+    assert!(!db.request_shutdown(mac).await.1); // request
+    assert!(db.report_leak(mac).await.1);       // acknowledge & reset
+    assert!(!db.report_leak(mac).await.1);      // proceed
 
     let id = db.create_session(mac).await.unwrap();
     let (other_mac, shutdown) = db.get_unit_from_session(id).await.unwrap();
