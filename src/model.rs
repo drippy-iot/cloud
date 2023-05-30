@@ -1,4 +1,4 @@
-use chrono::{serde::ts_milliseconds, DateTime, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::types::{accepts, FromSql, Type};
 
@@ -27,13 +27,4 @@ impl<'a> FromSql<'a> for UserMessage {
     }
 
     accepts!(JSON);
-}
-
-#[derive(Serialize)]
-pub struct ClientFlow {
-    // Creation data of the data point
-    #[serde(with = "ts_milliseconds")]
-    pub creation: DateTime<Utc>,
-    // Flow rate of a device at a given time.
-    pub flow: u16,
 }
