@@ -11,7 +11,6 @@ async fn database_tests() -> anyhow::Result<()> {
     // Generate random MAC address for testing purposes.
     let mut rng = nanorand::WyRand::new();
     let [a, b, c, d, e, f, ..] = rng.rand();
-    drop(rng);
     let addr = MacAddress([a, b, c, d, e, f]);
     let start = chrono::Utc::now();
 
