@@ -1,7 +1,6 @@
-use crate::model::ClientFlow;
+use crate::model::UserMessage;
 
 use chrono::{DateTime, Utc};
-use futures_util::{Stream, StreamExt, TryStreamExt};
 use tokio_postgres::error::SqlState;
 
 pub use model::{report::Flow, MacAddress};
@@ -41,7 +40,7 @@ impl Database {
         let row = self
             .db
             .query_one(
-                "WITH _ AS (INSERT INTO status (mac, flow) VALUES ($1, $2) RETURNING creation, mac), \
+                "WITH _ AS (INSERT INTO flow (mac, flow) VALUES ($1, $2) RETURNING creation, mac), \
                 old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
                 UPDATE unit SET shutdown = DEFAULT FROM _, old WHERE unit.mac = _.mac RETURNING _.creation, old.shutdown",
                 &[&addr, &flow],
@@ -56,33 +55,59 @@ impl Database {
 
     /// Reports to the database a single instance of a leak detection.
     /// Returns the latest shutdown state of the unit.
-    pub async fn report_leak(&self, mac: MacAddress) -> bool {
+    pub async fn report_leak(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
         let row = self
             .db
             .query_one(
-                "WITH _ AS (INSERT INTO leak (mac) VALUES ($1) RETURNING mac), \
+                "WITH _ AS (INSERT INTO leak (mac) VALUES ($1) RETURNING creation, mac), \
                 old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
-                UPDATE unit SET shutdown = FALSE FROM _, old WHERE unit.mac = _.mac RETURNING old.shutdown",
+                UPDATE unit SET shutdown = FALSE FROM _, old WHERE unit.mac = _.mac RETURNING _.creation, old.shutdown",
                 &[&mac],
             )
             .await
             .unwrap();
-        row.get(0)
+
+        let creation = row.get(0);
+        let shutdown = row.get(1);
+        (creation, shutdown)
     }
 
     /// Sets the shutdown flag for the unit associated with the given
     /// MAC address. Returns the previously set value for the flag.
-    pub async fn request_shutdown(&self, mac: MacAddress) -> bool {
+    pub async fn request_shutdown(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
         let row = self
             .db
             .query_one(
-                "WITH _ AS (SELECT mac, shutdown FROM unit WHERE mac = $1) \
-                UPDATE unit SET shutdown = TRUE FROM _ WHERE unit.mac = _.mac RETURNING _.shutdown",
+                "WITH _ AS (INSERT INTO control (mac, shutdown) VALUES ($1, TRUE) RETURNING creation, mac, shutdown), \
+                old AS (SELECT mac, unit.shutdown FROM _ INNER JOIN unit USING (mac)) \
+                UPDATE unit SET shutdown = _.shutdown FROM _, old WHERE unit.mac = old.mac RETURNING _.creation, old.shutdown",
                 &[&mac],
             )
             .await
             .unwrap();
-        row.get(0)
+
+        let creation = row.get(0);
+        let shutdown = row.get(1);
+        (creation, shutdown)
+    }
+
+    /// Resets the shutdown flag for the unit associated with the given
+    /// MAC address. Returns the previously set value for the flag.
+    pub async fn request_reset(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
+        let row = self
+            .db
+            .query_one(
+                "WITH _ AS (INSERT INTO control (mac, shutdown) VALUES ($1, FALSE) RETURNING creation, mac, shutdown), \
+                old AS (SELECT mac, unit.shutdown FROM _ INNER JOIN unit USING (mac)) \
+                UPDATE unit SET shutdown = _.shutdown FROM _, old WHERE unit.mac = old.mac RETURNING _.creation, old.shutdown",
+                &[&mac],
+            )
+            .await
+            .unwrap();
+
+        let creation = row.get(0);
+        let shutdown = row.get(1);
+        (creation, shutdown)
     }
 
     /// Creates a new session from the given address. If the MAC address had not been previously
@@ -116,26 +141,22 @@ impl Database {
         Some((mac, shutdown))
     }
 
-    /// Fetches a stream of [`ClientFlow`] (given a [`chrono::DateTime`] and the [`MacAddress`]) from the database.
-    pub async fn get_flows(
-        &self,
-        mac: MacAddress,
-        start: DateTime<Utc>,
-    ) -> impl Stream<Item = ClientFlow> {
-        use tokio_postgres::types::ToSql;
-        self.db
-            .query_raw(
-                "SELECT creation, flow FROM status WHERE mac = $1 AND creation > $2",
-                [&mac as &(dyn ToSql + Sync), &start as _],
+    /// Get a unified [`Vec`] of [`UserMessage`] JSON objects.
+    pub async fn get_metrics_since(&self, mac: MacAddress, since: DateTime<Utc>) -> Vec<UserMessage> {
+        let row = self.db
+            .query_one(
+                "WITH _ AS (\
+                    SELECT 'flow' AS ty, mac, creation, flow, NULL::BOOLEAN AS shutdown FROM flow \
+                        UNION ALL \
+                    SELECT 'leak' AS ty, mac, creation, NULL AS flow, NULL AS shutdown FROM leak \
+                        UNION ALL \
+                    SELECT 'control' AS ty, mac, creation, NULL AS flow, shutdown FROM control\
+                ) SELECT coalesce(json_strip_nulls(json_agg(_)), '[]') AS items FROM _ WHERE mac = $1 AND creation > $2",
+                &[&mac, &since],
             )
             .await
-            .unwrap()
-            .map_ok(|row| {
-                let creation = row.get(0);
-                let data: i16 = row.get(1);
-                ClientFlow { creation, flow: data.try_into().unwrap() }
-            })
-            .into_stream()
-            .map(Result::unwrap)
+            .unwrap();
+        let val = row.get(0);
+        serde_json::from_value(val).unwrap()
     }
 }

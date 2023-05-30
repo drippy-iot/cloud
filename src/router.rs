@@ -1,10 +1,12 @@
-use crate::{database::Database, model::ClientFlow};
+use crate::{
+    database::Database,
+    model::{Payload, UserMessage},
+};
 
-use alloc::{string::String, sync::Arc, vec::Vec};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use cookie::Cookie;
 use core::{convert::Infallible, future::Future};
-use futures_util::{FutureExt, Stream, StreamExt as _, TryFutureExt as _};
+use futures_util::{FutureExt as _, Stream, StreamExt as _, TryFutureExt as _};
 use http_body_util::{BodyExt as _, Either, Full, StreamBody};
 use hyper::{
     body::{Bytes, Frame, Incoming},
@@ -13,6 +15,8 @@ use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
 };
 use model::{decode, report::Flow, MacAddress};
+use serde::Serialize;
+use std::sync::Arc;
 use tokio::sync::broadcast::{channel, Sender};
 use uuid::Uuid;
 
@@ -26,6 +30,13 @@ fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
             None
         }
     })
+}
+
+fn to_sse_message<T: Serialize>(value: &T) -> serde_json::Result<Bytes> {
+    let mut buffer = String::from("data: ").into_bytes();
+    serde_json::to_writer(&mut buffer, value)?;
+    buffer.extend_from_slice(b"\n\n");
+    Ok(Bytes::from(buffer))
 }
 
 #[derive(Clone)]
@@ -72,7 +83,7 @@ impl Router {
                     let fmt = sid.simple();
                     log::info!("session {fmt} retrieved session details for unit {mac} [{shutdown}]");
 
-                    let bytes = alloc::boxed::Box::<[_]>::from(mac.0);
+                    let bytes = Box::<[_]>::from(mac.0);
                     let body = Either::Left(Full::new(Bytes::from(bytes)));
 
                     let mut res = Response::new(body);
@@ -108,15 +119,11 @@ impl Router {
                         return Err(StatusCode::UNAUTHORIZED);
                     };
 
-                    let data: Vec<_> = self.db.get_flows(mac, start).await.collect().await;
+                    let data = self.db.get_metrics_since(mac, start).await.into_boxed_slice();
                     let fmt = sid.simple();
                     log::info!("session {fmt} retrieved metrics for unit {mac} [{shutdown}]");
-
-                    let mut buffer = String::from("data: ").into_bytes();
-                    serde_json::to_writer(&mut buffer, &data).unwrap();
+                    let json = Frame::data(to_sse_message(&data).unwrap());
                     drop(data);
-                    buffer.extend_from_slice(b"\n\n");
-                    let json = Frame::data(Bytes::from(buffer));
 
                     use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
                     let stream = BroadcastStream::new(self.tx.subscribe()).filter_map(move |res| {
@@ -163,8 +170,44 @@ impl Router {
                     };
 
                     let mut res = Response::new(Either::Left(Default::default()));
-                    *res.status_mut() =
-                        if self.db.request_shutdown(mac).await { StatusCode::ACCEPTED } else { StatusCode::OK };
+                    let (creation, shutdown) = self.db.request_shutdown(mac).await;
+                    let message = UserMessage { creation, data: Payload::Control { shutdown: true } };
+                    let json = to_sse_message(&message).unwrap();
+
+                    if let Ok(receivers) = self.tx.send((mac, json)) {
+                        log::trace!("unit {mac} notified {receivers} listeners");
+                    } else {
+                        log::trace!("no active listeners for unit {mac}");
+                    }
+
+                    *res.status_mut() = if shutdown { StatusCode::ACCEPTED } else { StatusCode::OK };
+                    log::info!("session {fmt} requested shutdown of unit {mac}");
+                    Ok(res)
+                }
+                "/api/reset" => {
+                    let Some(sid) = extract_session_id(&headers) else {
+                        log::error!("absent session");
+                        return Err(StatusCode::UNAUTHORIZED);
+                    };
+
+                    let fmt = sid.simple();
+                    let Some((mac, _)) = self.db.get_unit_from_session(sid).await else {
+                        log::error!("invalid session {fmt}");
+                        return Err(StatusCode::UNAUTHORIZED);
+                    };
+
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    let (creation, shutdown) = self.db.request_reset(mac).await;
+                    let message = UserMessage { creation, data: Payload::Control { shutdown: false } };
+                    let json = to_sse_message(&message).unwrap();
+
+                    if let Ok(receivers) = self.tx.send((mac, json)) {
+                        log::trace!("unit {mac} notified {receivers} listeners");
+                    } else {
+                        log::trace!("no active listeners for unit {mac}");
+                    }
+
+                    *res.status_mut() = if shutdown { StatusCode::OK } else { StatusCode::ACCEPTED };
                     log::info!("session {fmt} requested shutdown of unit {mac}");
                     Ok(res)
                 }
@@ -185,7 +228,7 @@ impl Router {
                     let fmt = uuid.simple();
                     log::info!("created new session {fmt} for unit {mac}");
 
-                    let cookie = alloc::format!("sid={fmt}; HttpOnly; SameSite=None; Secure");
+                    let cookie = format!("sid={fmt}; HttpOnly; SameSite=None; Secure");
                     let cookie = HeaderValue::from_str(&cookie).unwrap();
 
                     let mut res = Response::new(Either::Left(Default::default()));
@@ -203,11 +246,10 @@ impl Router {
                     log::info!("unit {addr} reported {data} ticks");
 
                     let (creation, shutdown) = self.db.report_flow(flow).await;
-                    let mut buffer = String::from("data: ").into_bytes();
-                    serde_json::to_writer(&mut buffer, &[ClientFlow { creation, flow: data.into() }]).unwrap();
-                    buffer.extend_from_slice(b"\n\n");
+                    let message = UserMessage { creation, data: Payload::Flow { flow: data } };
+                    let json = to_sse_message(&message).unwrap();
 
-                    if let Ok(receivers) = self.tx.send((addr, Bytes::from(buffer))) {
+                    if let Ok(receivers) = self.tx.send((addr, json)) {
                         log::trace!("unit {addr} notified {receivers} listeners");
                     } else {
                         log::trace!("no active listeners for unit {addr}");
@@ -225,13 +267,18 @@ impl Router {
 
                     log::warn!("leak detected from {mac}");
 
-                    let mut res = Response::new(Either::Left(Default::default()));
-                    *res.status_mut() = if self.db.report_leak(mac).await {
-                        StatusCode::SERVICE_UNAVAILABLE
-                    } else {
-                        StatusCode::CREATED
-                    };
+                    let (creation, shutdown) = self.db.report_leak(mac).await;
+                    let message = UserMessage { creation, data: Payload::Leak };
+                    let json = to_sse_message(&message).unwrap();
 
+                    if let Ok(receivers) = self.tx.send((mac, json)) {
+                        log::trace!("unit {mac} notified {receivers} listeners");
+                    } else {
+                        log::trace!("no active listeners for unit {mac}");
+                    }
+
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
                     Ok(res)
                 }
                 "/report/register" => {
