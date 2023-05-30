@@ -207,7 +207,7 @@ impl Router {
                         log::trace!("no active listeners for unit {mac}");
                     }
 
-                    *res.status_mut() = if shutdown { StatusCode::ACCEPTED } else { StatusCode::OK };
+                    *res.status_mut() = if shutdown { StatusCode::OK } else { StatusCode::ACCEPTED };
                     log::info!("session {fmt} requested shutdown of unit {mac}");
                     Ok(res)
                 }
