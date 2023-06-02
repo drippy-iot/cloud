@@ -296,6 +296,28 @@ impl Router {
                     log::info!("unit {mac} registered");
                     Ok(res)
                 }
+                "/report/reset" => {
+                    let Ok(mac) = decode::<MacAddress>(&bytes) else {
+                        log::error!("malformed reset request detected");
+                        return Err(StatusCode::BAD_REQUEST);
+                    };
+
+                    log::warn!("manual bypass triggered on {mac}");
+
+                    let (creation, shutdown) = self.db.report_reset(mac).await;
+                    let message = UserMessage { creation, data: Payload::Control { shutdown: false } };
+                    let json = to_sse_message(&message).unwrap();
+
+                    if let Ok(receivers) = self.tx.send((mac, json)) {
+                        log::trace!("unit {mac} notified {receivers} listeners");
+                    } else {
+                        log::trace!("no active listeners for unit {mac}");
+                    }
+
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    *res.status_mut() = if shutdown { StatusCode::CREATED } else { StatusCode::SERVICE_UNAVAILABLE };
+                    Ok(res)
+                }
                 path => {
                     log::error!("unexpected request to POST {path}");
                     Err(StatusCode::NOT_FOUND)

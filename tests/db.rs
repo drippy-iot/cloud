@@ -40,6 +40,17 @@ async fn database_tests() -> anyhow::Result<()> {
     assert!(start < creation);
     assert!(!shutdown);
 
+    // Report manual bypasses; no shutdown requests must occur (by definition)
+    let (creation, shutdown) = db.report_reset(addr).await;
+    assert!(start < creation);
+    assert!(!shutdown);
+    let (creation, shutdown) = db.report_reset(addr).await;
+    assert!(start < creation);
+    assert!(!shutdown);
+    let (creation, shutdown) = db.report_reset(addr).await;
+    assert!(start < creation);
+    assert!(!shutdown);
+
     // Request shutdown when reporting water flow
     let (creation, shutdown) = db.request_shutdown(addr).await; // request
     assert!(start < creation);
@@ -70,9 +81,20 @@ async fn database_tests() -> anyhow::Result<()> {
     assert!(start < creation);
     assert!(shutdown);
 
+    // Manual bypass should override the shutdown request
+    let (creation, shutdown) = db.request_shutdown(addr).await;
+    assert!(start < creation);
+    assert!(!shutdown);
+    let (creation, shutdown) = db.report_reset(addr).await;
+    assert!(start < creation);
+    assert!(shutdown);
+    let (creation, shutdown) = db.report_reset(addr).await;
+    assert!(start < creation);
+    assert!(!shutdown);
+
     // Get all timestamp since the start of these tests
     let metrics = db.get_metrics_since(addr, start).await.into_boxed_slice();
-    assert_eq!(metrics.len(), 14);
+    assert_eq!(metrics.len(), 20);
 
     // Test user login flow
     let id = db.create_session(addr).await.unwrap();

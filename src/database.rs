@@ -72,6 +72,25 @@ impl Database {
         (creation, shutdown)
     }
 
+    /// Reports to the database a single instance of manual bypass from the hardware.
+    /// Returns the latest shutdown state of the unit.
+    pub async fn report_reset(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
+        let row = self
+            .db
+            .query_one(
+                "WITH _ AS (INSERT INTO control (mac, shutdown) VALUES ($1, FALSE) RETURNING creation, mac), \
+                old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
+                UPDATE unit SET shutdown = FALSE FROM _, old WHERE unit.mac = _.mac RETURNING _.creation, old.shutdown",
+                &[&mac],
+            )
+            .await
+            .unwrap();
+
+        let creation = row.get(0);
+        let shutdown = row.get(1);
+        (creation, shutdown)
+    }
+
     /// Sets the shutdown flag for the unit associated with the given
     /// MAC address. Returns the previously set value for the flag.
     pub async fn request_shutdown(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
