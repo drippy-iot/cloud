@@ -131,7 +131,7 @@ impl Database {
                     SELECT 'open' AS ty, mac, creation, NULL AS flow, NULL as leak FROM control WHERE request \
                         UNION ALL \
                     SELECT 'close' AS ty, mac, creation, NULL AS flow, NULL as leak FROM control WHERE NOT request \
-                ) SELECT coalesce(json_strip_nulls(json_agg(_)), '[]') AS items FROM _ WHERE mac = $1 AND creation > $2",
+                ) SELECT coalesce(jsonb_strip_nulls(jsonb_agg(_) - 'mac'), '[]') AS items FROM _ WHERE mac = $1 AND creation > $2",
                 &[&mac, &since],
             )
             .await
