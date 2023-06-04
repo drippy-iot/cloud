@@ -3,7 +3,7 @@ use crate::model::UserMessage;
 use chrono::{DateTime, Utc};
 use tokio_postgres::error::SqlState;
 
-pub use model::{report::Flow, MacAddress};
+pub use model::{report::Ping, MacAddress};
 pub use tokio_postgres::Client;
 pub use uuid::Uuid;
 
@@ -33,100 +33,61 @@ impl Database {
         row.get(0)
     }
 
-    /// Reports to the database the current water flow of the device.
-    /// Returns the latest shutdown state of the unit.
-    pub async fn report_flow(&self, Flow { addr, flow }: Flow) -> (DateTime<Utc>, bool) {
+    /// Requests a remote shutdown/close. Returns the old value for the `unit.request` flag.
+    pub async fn request_close(&self, mac: MacAddress) -> (DateTime<Utc>, Option<bool>) {
+        let row = self
+            .db
+            .query_one(
+                "WITH ins AS (INSERT INTO control (mac, request) VALUES ($1, FALSE) RETURNING creation), \
+                old AS (SELECT request FROM unit WHERE mac = $1) \
+                UPDATE unit SET by request = CASE old.request WHEN TRUE THEN NULL ELSE FALSE END \
+                FROM ins, old WHERE unit.mac = $1 RETURNING ins.creation, old.request",
+                &[&mac],
+            )
+            .await
+            .unwrap();
+
+        let creation = row.get(0);
+        let shutdown = row.get(1);
+        (creation, shutdown)
+    }
+
+    /// Requests a remote bypass. Returns the old value for the `unit.request` flag.
+    pub async fn request_open(&self, mac: MacAddress) -> (DateTime<Utc>, Option<bool>) {
+        let row = self
+            .db
+            .query_one(
+                "WITH ins AS (INSERT INTO control (mac, request) VALUES ($1, TRUE) RETURNING creation), \
+                old AS (SELECT request FROM unit WHERE mac = $1) \
+                UPDATE unit SET request = CASE old.request WHEN FALSE THEN NULL ELSE TRUE END \
+                FROM ins, old WHERE unit.mac = $1 RETURNING ins.creation, old.request",
+                &[&mac],
+            )
+            .await
+            .unwrap();
+
+        let creation = row.get(0);
+        let request = row.get(1);
+        (creation, request)
+    }
+
+    /// Reports a ping to the server. Also consumes the lateest `unit.request` command.
+    pub async fn report_ping(&self, Ping { addr, flow, leak }: Ping) -> (DateTime<Utc>, Option<bool>) {
         let flow = i16::try_from(flow).unwrap();
         let row = self
             .db
             .query_one(
-                "WITH _ AS (INSERT INTO flow (mac, flow) VALUES ($1, $2) RETURNING creation, mac), \
-                old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
-                UPDATE unit SET shutdown = DEFAULT FROM _, old WHERE unit.mac = _.mac RETURNING _.creation, old.shutdown",
-                &[&addr, &flow],
+                "WITH ins AS (INSERT INTO ping (mac, flow, leak) VALUES ($1, $2, $3) RETURNING creation), \
+                old AS (SELECT request FROM unit WHERE mac = $1) \
+                UPDATE unit SET request = NULL FROM ins, old WHERE unit.mac = $1 RETURNING ins.creation, old.request",
+                &[&addr, &flow, &leak],
             )
             .await
             .unwrap();
 
         let creation = row.get(0);
-        let shutdown = row.get(1);
-        (creation, shutdown)
-    }
-
-    /// Reports to the database a single instance of a leak detection.
-    /// Returns the latest shutdown state of the unit.
-    pub async fn report_leak(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
-        let row = self
-            .db
-            .query_one(
-                "WITH _ AS (INSERT INTO leak (mac) VALUES ($1) RETURNING creation, mac), \
-                old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
-                UPDATE unit SET shutdown = FALSE FROM _, old WHERE unit.mac = _.mac RETURNING _.creation, old.shutdown",
-                &[&mac],
-            )
-            .await
-            .unwrap();
-
-        let creation = row.get(0);
-        let shutdown = row.get(1);
-        (creation, shutdown)
-    }
-
-    /// Reports to the database a single instance of manual bypass from the hardware.
-    /// Returns the latest shutdown state of the unit.
-    pub async fn report_reset(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
-        let row = self
-            .db
-            .query_one(
-                "WITH _ AS (INSERT INTO control (mac, shutdown) VALUES ($1, FALSE) RETURNING creation, mac), \
-                old AS (SELECT shutdown FROM _ INNER JOIN unit USING (mac)) \
-                UPDATE unit SET shutdown = FALSE FROM _, old WHERE unit.mac = _.mac RETURNING _.creation, old.shutdown",
-                &[&mac],
-            )
-            .await
-            .unwrap();
-
-        let creation = row.get(0);
-        let shutdown = row.get(1);
-        (creation, shutdown)
-    }
-
-    /// Sets the shutdown flag for the unit associated with the given
-    /// MAC address. Returns the previously set value for the flag.
-    pub async fn request_shutdown(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
-        let row = self
-            .db
-            .query_one(
-                "WITH _ AS (INSERT INTO control (mac, shutdown) VALUES ($1, TRUE) RETURNING creation, mac, shutdown), \
-                old AS (SELECT mac, unit.shutdown FROM _ INNER JOIN unit USING (mac)) \
-                UPDATE unit SET shutdown = _.shutdown FROM _, old WHERE unit.mac = old.mac RETURNING _.creation, old.shutdown",
-                &[&mac],
-            )
-            .await
-            .unwrap();
-
-        let creation = row.get(0);
-        let shutdown = row.get(1);
-        (creation, shutdown)
-    }
-
-    /// Resets the shutdown flag for the unit associated with the given
-    /// MAC address. Returns the previously set value for the flag.
-    pub async fn request_reset(&self, mac: MacAddress) -> (DateTime<Utc>, bool) {
-        let row = self
-            .db
-            .query_one(
-                "WITH _ AS (INSERT INTO control (mac, shutdown) VALUES ($1, FALSE) RETURNING creation, mac, shutdown), \
-                old AS (SELECT mac, unit.shutdown FROM _ INNER JOIN unit USING (mac)) \
-                UPDATE unit SET shutdown = _.shutdown FROM _, old WHERE unit.mac = old.mac RETURNING _.creation, old.shutdown",
-                &[&mac],
-            )
-            .await
-            .unwrap();
-
-        let creation = row.get(0);
-        let shutdown = row.get(1);
-        (creation, shutdown)
+        let request = row.get(1);
+        (creation, request)
     }
 
     /// Creates a new session from the given address. If the MAC address had not been previously
