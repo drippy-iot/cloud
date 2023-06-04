@@ -14,7 +14,7 @@ use hyper::{
     http::{request::Parts, HeaderValue},
     HeaderMap, Method, Request, Response, StatusCode,
 };
-use model::{decode, report::Flow, MacAddress};
+use model::{decode, report::Ping, MacAddress};
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast::{channel, Sender};
@@ -169,9 +169,10 @@ impl Router {
                         return Err(StatusCode::UNAUTHORIZED);
                     };
 
-                    let mut res = Response::new(Either::Left(Default::default()));
-                    let (creation, shutdown) = self.db.request_shutdown(mac).await;
-                    let message = UserMessage { creation, data: Payload::Control { shutdown: true } };
+                    let (creation, state) = self.db.request_close(mac).await;
+                    log::info!("session {fmt} requested shutdown of unit {mac}");
+
+                    let message = UserMessage { creation, data: Payload::Close };
                     let json = to_sse_message(&message).unwrap();
 
                     if let Ok(receivers) = self.tx.send((mac, json)) {
@@ -180,8 +181,12 @@ impl Router {
                         log::trace!("no active listeners for unit {mac}");
                     }
 
-                    *res.status_mut() = if shutdown { StatusCode::ACCEPTED } else { StatusCode::OK };
-                    log::info!("session {fmt} requested shutdown of unit {mac}");
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    *res.status_mut() = match state {
+                        Some(true) => StatusCode::RESET_CONTENT,
+                        Some(false) => StatusCode::NO_CONTENT,
+                        None => StatusCode::CREATED,
+                    };
                     Ok(res)
                 }
                 "/api/reset" => {
@@ -196,9 +201,10 @@ impl Router {
                         return Err(StatusCode::UNAUTHORIZED);
                     };
 
-                    let mut res = Response::new(Either::Left(Default::default()));
-                    let (creation, shutdown) = self.db.request_reset(mac).await;
-                    let message = UserMessage { creation, data: Payload::Control { shutdown: false } };
+                    let (creation, state) = self.db.request_open(mac).await;
+                    log::info!("session {fmt} requested shutdown of unit {mac}");
+
+                    let message = UserMessage { creation, data: Payload::Open };
                     let json = to_sse_message(&message).unwrap();
 
                     if let Ok(receivers) = self.tx.send((mac, json)) {
@@ -207,8 +213,12 @@ impl Router {
                         log::trace!("no active listeners for unit {mac}");
                     }
 
-                    *res.status_mut() = if shutdown { StatusCode::OK } else { StatusCode::ACCEPTED };
-                    log::info!("session {fmt} requested shutdown of unit {mac}");
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    *res.status_mut() = match state {
+                        Some(true) => StatusCode::NO_CONTENT,
+                        Some(false) => StatusCode::RESET_CONTENT,
+                        None => StatusCode::CREATED,
+                    };
                     Ok(res)
                 }
                 "/auth/session" => {
@@ -236,51 +246,6 @@ impl Router {
                     *res.status_mut() = StatusCode::CREATED;
                     Ok(res)
                 }
-                "/report/flow" => {
-                    let Ok(flow) = decode::<Flow>(&bytes) else {
-                        log::error!("malformed water flow reported");
-                        return Err(StatusCode::BAD_REQUEST);
-                    };
-
-                    let Flow { addr, flow: data } = flow;
-                    log::info!("unit {addr} reported {data} ticks");
-
-                    let (creation, shutdown) = self.db.report_flow(flow).await;
-                    let message = UserMessage { creation, data: Payload::Flow { flow: data } };
-                    let json = to_sse_message(&message).unwrap();
-
-                    if let Ok(receivers) = self.tx.send((addr, json)) {
-                        log::trace!("unit {addr} notified {receivers} listeners");
-                    } else {
-                        log::trace!("no active listeners for unit {addr}");
-                    }
-
-                    let mut res = Response::new(Either::Left(Default::default()));
-                    *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
-                    Ok(res)
-                }
-                "/report/leak" => {
-                    let Ok(mac) = decode::<MacAddress>(&bytes) else {
-                        log::error!("malformed leak reported");
-                        return Err(StatusCode::BAD_REQUEST);
-                    };
-
-                    log::warn!("leak detected from {mac}");
-
-                    let (creation, shutdown) = self.db.report_leak(mac).await;
-                    let message = UserMessage { creation, data: Payload::Leak };
-                    let json = to_sse_message(&message).unwrap();
-
-                    if let Ok(receivers) = self.tx.send((mac, json)) {
-                        log::trace!("unit {mac} notified {receivers} listeners");
-                    } else {
-                        log::trace!("no active listeners for unit {mac}");
-                    }
-
-                    let mut res = Response::new(Either::Left(Default::default()));
-                    *res.status_mut() = if shutdown { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CREATED };
-                    Ok(res)
-                }
                 "/report/register" => {
                     let Ok(mac) = decode::<MacAddress>(&bytes) else {
                         log::error!("malformed MAC registration");
@@ -296,26 +261,31 @@ impl Router {
                     log::info!("unit {mac} registered");
                     Ok(res)
                 }
-                "/report/reset" => {
-                    let Ok(mac) = decode::<MacAddress>(&bytes) else {
-                        log::error!("malformed reset request detected");
+                "/report/ping" => {
+                    let Ok(flow) = decode::<Ping>(&bytes) else {
+                        log::error!("malformed water flow reported");
                         return Err(StatusCode::BAD_REQUEST);
                     };
 
-                    log::warn!("manual bypass triggered on {mac}");
+                    let Ping { addr, flow: data, leak } = flow;
+                    log::info!("unit {addr} reported {data} ticks");
 
-                    let (creation, shutdown) = self.db.report_reset(mac).await;
-                    let message = UserMessage { creation, data: Payload::Control { shutdown: false } };
+                    let (creation, state) = self.db.report_ping(flow).await;
+                    let message = UserMessage { creation, data: Payload::Flow { flow: data, leak } };
                     let json = to_sse_message(&message).unwrap();
 
-                    if let Ok(receivers) = self.tx.send((mac, json)) {
-                        log::trace!("unit {mac} notified {receivers} listeners");
+                    if let Ok(receivers) = self.tx.send((addr, json)) {
+                        log::trace!("unit {addr} notified {receivers} listeners");
                     } else {
-                        log::trace!("no active listeners for unit {mac}");
+                        log::trace!("no active listeners for unit {addr}");
                     }
 
                     let mut res = Response::new(Either::Left(Default::default()));
-                    *res.status_mut() = if shutdown { StatusCode::CREATED } else { StatusCode::SERVICE_UNAVAILABLE };
+                    *res.status_mut() = match state {
+                        Some(true) => StatusCode::RESET_CONTENT,
+                        Some(false) => StatusCode::NO_CONTENT,
+                        None => StatusCode::CREATED,
+                    };
                     Ok(res)
                 }
                 path => {
