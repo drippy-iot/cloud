@@ -6,9 +6,9 @@ use tokio_postgres::types::{accepts, FromSql, Type};
 #[serde(rename_all = "lowercase")]
 #[serde(tag = "ty")]
 pub enum Payload {
-    Flow { flow: u16 },
-    Control { shutdown: bool },
-    Leak,
+    Ping { flow: u16, leak: bool },
+    Open,
+    Close,
 }
 
 #[derive(Deserialize, Serialize)]

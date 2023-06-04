@@ -1,4 +1,4 @@
-use model::{report::Flow, MacAddress};
+use model::{report::Ping, MacAddress};
 use nanorand::Rng as _;
 
 #[tokio::test]
@@ -15,92 +15,84 @@ async fn database_tests() -> anyhow::Result<()> {
     let start = chrono::Utc::now();
 
     // Register the unit twice just to check if we handle the upsert gracefully
-    assert!(!db.register_unit(addr).await); // first registration
-    assert!(!db.register_unit(addr).await); // existing registration
+    assert_eq!(db.register_unit(addr).await, None); // first registration
+    assert_eq!(db.register_unit(addr).await, None); // existing registration
 
-    // Ping water flow thrice; no shutdown requests must occur
-    let (creation, shutdown) = db.report_flow(Flow { addr, flow: 50 }).await;
+    // Ping water flow thrice without leaks; no shutdown requests must occur
+    let (creation, state) = db.report_ping(Ping { addr, flow: 50, leak: false }).await;
     assert!(start < creation);
-    assert!(!shutdown);
-    let (creation, shutdown) = db.report_flow(Flow { addr, flow: 78 }).await;
+    assert_eq!(state, None);
+    let (creation, state) = db.report_ping(Ping { addr, flow: 78, leak: false }).await;
     assert!(start < creation);
-    assert!(!shutdown);
-    let (creation, shutdown) = db.report_flow(Flow { addr, flow: 100 }).await;
+    assert_eq!(state, None);
+    let (creation, state) = db.report_ping(Ping { addr, flow: 100, leak: false }).await;
     assert!(start < creation);
-    assert!(!shutdown);
+    assert_eq!(state, None);
 
     // Report leaks thrice; no shutdown requests must occur
-    let (creation, shutdown) = db.report_leak(addr).await;
+    let (creation, state) = db.report_ping(Ping { addr, flow: 100, leak: true }).await;
     assert!(start < creation);
-    assert!(!shutdown);
-    let (creation, shutdown) = db.report_leak(addr).await;
+    assert_eq!(state, None);
+    let (creation, state) = db.report_ping(Ping { addr, flow: 256, leak: true }).await;
     assert!(start < creation);
-    assert!(!shutdown);
-    let (creation, shutdown) = db.report_leak(addr).await;
+    assert_eq!(state, None);
+    let (creation, state) = db.report_ping(Ping { addr, flow: 512, leak: true }).await;
     assert!(start < creation);
-    assert!(!shutdown);
-
-    // Report manual bypasses; no shutdown requests must occur (by definition)
-    let (creation, shutdown) = db.report_reset(addr).await;
-    assert!(start < creation);
-    assert!(!shutdown);
-    let (creation, shutdown) = db.report_reset(addr).await;
-    assert!(start < creation);
-    assert!(!shutdown);
-    let (creation, shutdown) = db.report_reset(addr).await;
-    assert!(start < creation);
-    assert!(!shutdown);
+    assert_eq!(state, None);
 
     // Request shutdown when reporting water flow
-    let (creation, shutdown) = db.request_shutdown(addr).await; // request
+    let (creation, state) = db.request_close(addr).await;
     assert!(start < creation);
-    assert!(!shutdown);
-    let (creation, shutdown) = db.report_flow(Flow { addr, flow: 48 }).await; // acknowledge & reset
+    assert_eq!(state, None);
+    let (creation, state) = db.report_ping(Ping { addr, flow: 512, leak: false }).await;
     assert!(start < creation);
-    assert!(shutdown);
-    let (creation, shutdown) = db.report_flow(Flow { addr, flow: 0 }).await; // proceed
+    assert_eq!(state, Some(false));
+    let (creation, state) = db.report_ping(Ping { addr, flow: 100, leak: false }).await;
     assert!(start < creation);
-    assert!(!shutdown);
+    assert_eq!(state, None);
 
-    // Request shutdown when reporting leaks
-    let (creation, shutdown) = db.request_shutdown(addr).await; // request
+    // Request reset when reporting water flow
+    let (creation, state) = db.request_open(addr).await;
     assert!(start < creation);
-    assert!(!shutdown);
-    let (creation, shutdown) = db.report_leak(addr).await; // acknowledge & reset
+    assert_eq!(state, None);
+    let (creation, state) = db.report_ping(Ping { addr, flow: 300, leak: false }).await;
     assert!(start < creation);
-    assert!(shutdown);
-    let (creation, shutdown) = db.report_leak(addr).await; // proceed
+    assert_eq!(state, Some(true));
+    let (creation, state) = db.report_ping(Ping { addr, flow: 457, leak: false }).await;
     assert!(start < creation);
-    assert!(!shutdown);
+    assert_eq!(state, None);
 
-    // Reset from a remote shutdown
-    let (creation, shutdown) = db.request_shutdown(addr).await;
+    // Remote bypass should override remote shutdown
+    let (creation, state) = db.request_close(addr).await;
     assert!(start < creation);
-    assert!(!shutdown);
-    let (creation, shutdown) = db.request_reset(addr).await;
+    assert_eq!(state, None);
+    let (creation, state) = db.request_open(addr).await;
     assert!(start < creation);
-    assert!(shutdown);
+    assert_eq!(state, Some(false));
+    let (creation, state) = db.report_ping(Ping { addr, flow: 12, leak: false }).await;
+    assert!(start < creation);
+    assert_eq!(state, None);
 
-    // Manual bypass should override the shutdown request
-    let (creation, shutdown) = db.request_shutdown(addr).await;
+    // Remote shutdown should override remote bypass
+    let (creation, state) = db.request_open(addr).await;
     assert!(start < creation);
-    assert!(!shutdown);
-    let (creation, shutdown) = db.report_reset(addr).await;
+    assert_eq!(state, None);
+    let (creation, state) = db.request_close(addr).await;
     assert!(start < creation);
-    assert!(shutdown);
-    let (creation, shutdown) = db.report_reset(addr).await;
+    assert_eq!(state, Some(true));
+    let (creation, state) = db.report_ping(Ping { addr, flow: 4, leak: false }).await;
     assert!(start < creation);
-    assert!(!shutdown);
+    assert_eq!(state, None);
 
     // Get all timestamp since the start of these tests
     let metrics = db.get_metrics_since(addr, start).await.into_boxed_slice();
-    assert_eq!(metrics.len(), 20);
+    assert_eq!(metrics.len(), 18);
 
     // Test user login flow
     let id = db.create_session(addr).await.unwrap();
-    let (other, shutdown) = db.get_unit_from_session(id).await.unwrap();
+    let (other, state) = db.get_unit_from_session(id).await.unwrap();
     assert_eq!(addr, other);
-    assert!(!shutdown);
+    assert_eq!(state, None);
     assert!(db.get_unit_from_session(uuid::Uuid::nil()).await.is_none());
 
     drop(db);
