@@ -21,7 +21,7 @@ CREATE TABLE ping(
         REFERENCES unit (mac)
 );
 
--- Snapshots of the bypass requests.
+-- Snapshots of the control events by the PWA.
 CREATE TABLE control(
     mac MACADDR NOT NULL,
     creation TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -29,6 +29,16 @@ CREATE TABLE control(
     request BOOLEAN NOT NULL,
     PRIMARY KEY (mac, creation),
     CONSTRAINT "FK_control.mac"
+        FOREIGN KEY (mac)
+        REFERENCES unit (mac)
+);
+
+-- Snapshots of the bypass deactivations made by the ESP32.
+CREATE TABLE bypass(
+    mac MACADDR NOT NULL,
+    creation TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (mac, creation),
+    CONSTRAINT "FK_bypass.mac"
         FOREIGN KEY (mac)
         REFERENCES unit (mac)
 );
