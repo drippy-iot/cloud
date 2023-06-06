@@ -286,7 +286,11 @@ impl Router {
                     };
 
                     let Ping { addr, flow: data, leak } = flow;
-                    log::info!("unit {addr} reported {data} ticks");
+                    if leak {
+                        log::warn!("unit {addr} reported {data} ticks with a leak");
+                    } else {
+                        log::info!("unit {addr} reported {data} ticks");
+                    }
 
                     let (creation, state) = self.db.report_ping(flow).await;
                     let message = UserMessage { creation, data: Payload::Ping { flow: data, leak } };
@@ -307,6 +311,28 @@ impl Router {
                         // No pending commands issued.
                         None => StatusCode::CREATED,
                     };
+                    Ok(res)
+                }
+                "/report/bypass" => {
+                    let Ok(addr) = decode::<MacAddress>(&bytes) else {
+                        log::error!("malformed MAC address received");
+                        return Err(StatusCode::BAD_REQUEST);
+                    };
+
+                    let creation = self.db.report_bypass(addr).await;
+                    log::warn!("unit {addr} reported a manual bypass");
+
+                    let message = UserMessage { creation, data: Payload::Bypass };
+                    let json = to_sse_message(&message).unwrap();
+
+                    if let Ok(receivers) = self.tx.send((addr, json)) {
+                        log::trace!("unit {addr} notified {receivers} listeners");
+                    } else {
+                        log::trace!("no active listeners for unit {addr}");
+                    }
+
+                    let mut res = Response::new(Either::Left(Default::default()));
+                    *res.status_mut() = StatusCode::CREATED;
                     Ok(res)
                 }
                 path => {

@@ -29,6 +29,14 @@ async fn database_tests() -> anyhow::Result<()> {
     assert!(start < creation);
     assert_eq!(state, None);
 
+    // Hardware should be able to report bypass deactivation
+    let creation = db.report_bypass(addr).await;
+    assert!(start < creation);
+    let creation = db.report_bypass(addr).await;
+    assert!(start < creation);
+    let creation = db.report_bypass(addr).await;
+    assert!(start < creation);
+
     // Report leaks thrice; no shutdown requests must occur
     let (creation, state) = db.report_ping(Ping { addr, flow: 100, leak: true }).await;
     assert!(start < creation);
@@ -86,7 +94,7 @@ async fn database_tests() -> anyhow::Result<()> {
 
     // Get all timestamp since the start of these tests
     let metrics = db.get_metrics_since(addr, start).await.into_boxed_slice();
-    assert_eq!(metrics.len(), 18);
+    assert_eq!(metrics.len(), 21);
 
     // Test user login flow
     let id = db.create_session(addr).await.unwrap();

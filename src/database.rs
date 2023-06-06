@@ -90,6 +90,12 @@ impl Database {
         (creation, request)
     }
 
+    /// Reports a bypass deactivation to the server.
+    pub async fn report_bypass(&self, mac: MacAddress) -> DateTime<Utc> {
+        let row = self.db.query_one("INSERT INTO bypass (mac) VALUES ($1) RETURNING creation", &[&mac]).await.unwrap();
+        row.get(0)
+    }
+
     /// Creates a new session from the given address. If the MAC address had not been previously
     /// registered (i.e., the ESP32 failed to ping the server before user logged in), this returns
     /// [`None`]. Otherwise, it returns the [`Uuid`] of the newly created session.
@@ -128,10 +134,13 @@ impl Database {
                 "WITH _ AS (\
                     SELECT 'ping' AS ty, mac, creation, flow, leak FROM ping \
                         UNION ALL \
+                    SELECT 'bypass' AS ty, mac, creation, NULL AS flow, NULL as leak FROM bypass \
+                        UNION ALL \
                     SELECT 'open' AS ty, mac, creation, NULL AS flow, NULL as leak FROM control WHERE request \
                         UNION ALL \
                     SELECT 'close' AS ty, mac, creation, NULL AS flow, NULL as leak FROM control WHERE NOT request \
-                ) SELECT coalesce(jsonb_strip_nulls(jsonb_agg(_) - 'mac'), '[]') AS items FROM _ WHERE mac = $1 AND creation > $2",
+                ), sorted AS (SELECT ty, creation, flow, leak FROM _ WHERE mac = $1 AND creation > $2 GROUP BY ty, creation, flow, leak ORDER BY creation) \
+                SELECT coalesce(jsonb_strip_nulls(jsonb_agg(sorted)), '[]') AS items FROM sorted LIMIT 1",
                 &[&mac, &since],
             )
             .await
