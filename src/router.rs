@@ -286,7 +286,11 @@ impl Router {
                     };
 
                     let Ping { addr, flow: data, leak } = flow;
-                    log::info!("unit {addr} reported {data} ticks");
+                    if leak {
+                        log::warn!("unit {addr} reported {data} ticks with a leak");
+                    } else {
+                        log::info!("unit {addr} reported {data} ticks");
+                    }
 
                     let (creation, state) = self.db.report_ping(flow).await;
                     let message = UserMessage { creation, data: Payload::Ping { flow: data, leak } };
