@@ -139,7 +139,8 @@ impl Database {
                     SELECT 'open' AS ty, mac, creation, NULL AS flow, NULL as leak FROM control WHERE request \
                         UNION ALL \
                     SELECT 'close' AS ty, mac, creation, NULL AS flow, NULL as leak FROM control WHERE NOT request \
-                ) SELECT coalesce(jsonb_strip_nulls(jsonb_agg(_) - 'mac'), '[]') AS items FROM _ WHERE mac = $1 AND creation > $2 ORDER BY creation",
+                ), sorted AS (SELECT ty, creation, flow, leak FROM _ WHERE mac = $1 AND creation > $2 GROUP BY ty, creation, flow, leak ORDER BY creation) \
+                SELECT coalesce(jsonb_strip_nulls(jsonb_agg(sorted)), '[]') AS items FROM sorted LIMIT 1",
                 &[&mac, &since],
             )
             .await
