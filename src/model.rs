@@ -9,6 +9,7 @@ pub enum Payload {
     Ping { flow: u16, leak: bool },
     Open,
     Close,
+    Bypass,
 }
 
 #[derive(Deserialize, Serialize)]
