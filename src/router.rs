@@ -320,6 +320,8 @@ impl Router {
                     };
 
                     let creation = self.db.report_bypass(addr).await;
+                    log::warn!("unit {addr} reported a manual bypass");
+
                     let message = UserMessage { creation, data: Payload::Bypass };
                     let json = to_sse_message(&message).unwrap();
 
