@@ -1,6 +1,7 @@
-use crate::model::UserMessage;
+use crate::model::Flow;
 
 use chrono::{DateTime, Utc};
+use futures_util::Stream;
 use tokio_postgres::error::SqlState;
 
 pub use model::{report::Ping, MacAddress};
@@ -127,25 +128,32 @@ impl Database {
         Some((mac, request))
     }
 
-    /// Get a unified [`Vec`] of [`UserMessage`] JSON objects.
-    pub async fn get_metrics_since(&self, mac: MacAddress, since: DateTime<Utc>) -> Vec<UserMessage> {
-        let row = self.db
-            .query_one(
+    pub async fn get_user_metrics_since(
+        &self,
+        mac: MacAddress,
+        secs: u32,
+        since: DateTime<Utc>,
+    ) -> impl Stream<Item = Flow> {
+        use futures_util::StreamExt as _;
+        use tokio_postgres::types::ToSql;
+        self
+            .db
+            .query_raw(
                 "WITH _ AS (\
-                    SELECT 'ping' AS ty, mac, creation, flow, leak FROM ping \
-                        UNION ALL \
-                    SELECT 'bypass' AS ty, mac, creation, NULL AS flow, NULL as leak FROM bypass \
-                        UNION ALL \
-                    SELECT 'open' AS ty, mac, creation, NULL AS flow, NULL as leak FROM control WHERE request \
-                        UNION ALL \
-                    SELECT 'close' AS ty, mac, creation, NULL AS flow, NULL as leak FROM control WHERE NOT request \
-                ), sorted AS (SELECT ty, creation, flow, leak FROM _ WHERE mac = $1 AND creation > $2 GROUP BY ty, creation, flow, leak ORDER BY creation) \
-                SELECT coalesce(jsonb_strip_nulls(jsonb_agg(sorted)), '[]') AS items FROM sorted LIMIT 1",
-                &[&mac, &since],
+                    SELECT generate_series($3, NOW(), make_interval(secs => $2)) AS end) EXCEPT SELECT $3\
+                ) SELECT DISTINCT end, COALESCE(AVG(flow) OVER (ORDER BY end RANGE BETWEEN make_interval(secs => $2) PRECEDING AND CURRENT ROW), 0)::REAL AS mean \
+                    FROM _ LEFT JOIN ping \
+                        ON end - make_interval(secs => $2) <= creation AND creation < end \
+                    WHERE mac = $1 ORDER BY end",
+                [&mac as &dyn ToSql, &secs as _, &since as _],
             )
             .await
-            .unwrap();
-        let val = row.get(0);
-        serde_json::from_value(val).unwrap()
+            .unwrap()
+            .map(|row| {
+                let row = row.unwrap();
+                let end = row.get(0);
+                let flow = row.get(1);
+                Flow { end, flow }
+            })
     }
 }

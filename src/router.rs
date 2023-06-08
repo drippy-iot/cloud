@@ -1,11 +1,9 @@
-use crate::{
-    database::Database,
-    model::{Payload, UserMessage},
-};
+use crate::{database::Database, model::Flow};
 
+use alloc::{boxed::Box, format, string::String, sync::Arc};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use cookie::Cookie;
-use core::{convert::Infallible, future::Future};
+use core::{convert::Infallible, future::Future, time::Duration};
 use futures_util::{FutureExt as _, Stream, StreamExt as _, TryFutureExt as _};
 use http_body_util::{BodyExt as _, Either, Full, StreamBody};
 use hyper::{
@@ -14,9 +12,11 @@ use hyper::{
     http::{request::Parts, HeaderValue},
     HeaderMap, Method, Request, Response, StatusCode,
 };
-use model::{decode, report::Ping, MacAddress};
-use serde::Serialize;
-use std::sync::Arc;
+use model::{
+    decode,
+    report::{Ping, POLL_QUANTUM},
+    MacAddress,
+};
 use tokio::sync::broadcast::{channel, Sender};
 use uuid::Uuid;
 
@@ -32,11 +32,27 @@ fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
     })
 }
 
-fn to_sse_message<T: Serialize>(value: &T) -> serde_json::Result<Bytes> {
-    let mut buffer = String::from("data: ").into_bytes();
+fn to_sse<T: serde::Serialize>(prefix: &str, value: &T) -> serde_json::Result<Bytes> {
+    let mut buffer = String::from(prefix).into_bytes();
     serde_json::to_writer(&mut buffer, value)?;
     buffer.extend_from_slice(b"\n\n");
     Ok(Bytes::from(buffer))
+}
+
+fn to_sse_flow(value: &Flow) -> serde_json::Result<Bytes> {
+    to_sse("event: flow\ndata: ", value)
+}
+
+fn to_sse_open(value: &DateTime<Utc>) -> serde_json::Result<Bytes> {
+    to_sse("event: open\ndata: ", value)
+}
+
+fn to_sse_close(value: &DateTime<Utc>) -> serde_json::Result<Bytes> {
+    to_sse("event: close\ndata: ", value)
+}
+
+fn to_sse_bypass(value: &DateTime<Utc>) -> serde_json::Result<Bytes> {
+    to_sse("event: bypass\ndata: ", value)
 }
 
 #[derive(Clone)]
@@ -97,24 +113,30 @@ impl Router {
                     };
                     Ok(res)
                 }
-                "/api/metrics" => {
+                "/api/metrics/user" => {
                     let Some(query) = uri.query() else {
                         log::error!("query string is absent");
                         return Err(StatusCode::BAD_REQUEST);
                     };
 
-                    let Some(start) = query.split('&').find_map(|pair| {
-                        let (key, value) = pair.split_once('=')?;
-                        if key != "start" {
-                            return None;
+                    let mut since = None;
+                    let mut secs = None;
+                    for pair in query.split('&') {
+                        if let Some((key, value)) = pair.split_once('=') {
+                            match key {
+                                "since" => since = value.parse().ok().and_then(NaiveDateTime::from_timestamp_millis),
+                                "secs" => secs = value.parse().ok(),
+                                _ => (),
+                            }
                         }
-                        let millis = value.parse().ok()?;
-                        let datetime = NaiveDateTime::from_timestamp_millis(millis)?;
-                        Some(DateTime::from_utc(datetime, Utc))
-                    }) else {
+                    }
+
+                    let Some(since) = since.map(|datetime| DateTime::from_utc(datetime, Utc)) else {
                         log::error!("query did not contain a valid timestamp");
                         return Err(StatusCode::BAD_REQUEST);
                     };
+
+                    let secs = secs.map(Duration::from_secs).unwrap_or(POLL_QUANTUM);
 
                     let Some(sid) = extract_session_id(&headers) else {
                         log::error!("absent session");
@@ -126,11 +148,14 @@ impl Router {
                         return Err(StatusCode::UNAUTHORIZED);
                     };
 
-                    let data = self.db.get_metrics_since(mac, start).await.into_boxed_slice();
+                    let init = self
+                        .db
+                        .get_user_metrics_since(mac, secs.as_secs().try_into().unwrap(), since)
+                        .await
+                        .map(|flow| Frame::data(to_sse_flow(&flow).unwrap()));
+
                     let fmt = sid.simple();
                     log::info!("session {fmt} retrieved metrics for unit {mac} [{state:?}]");
-                    let json = Frame::data(to_sse_message(&data).unwrap());
-                    drop(data);
 
                     use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
                     let stream = BroadcastStream::new(self.tx.subscribe()).filter_map(move |res| {
@@ -151,9 +176,7 @@ impl Router {
                         })
                     });
 
-                    let stream = tokio_stream::once(json).chain(stream);
-                    let body = Either::Right(StreamBody::new(stream));
-
+                    let body = Either::Right(StreamBody::new(init.chain(stream)));
                     let mut res = Response::new(body);
                     res.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
                     Ok(res)
@@ -179,9 +202,7 @@ impl Router {
                     let (creation, state) = self.db.request_close(mac).await;
                     log::info!("session {fmt} requested shutdown of unit {mac}");
 
-                    let message = UserMessage { creation, data: Payload::Close };
-                    let json = to_sse_message(&message).unwrap();
-
+                    let json = to_sse_close(&creation).unwrap();
                     if let Ok(receivers) = self.tx.send((mac, json)) {
                         log::trace!("unit {mac} notified {receivers} listeners");
                     } else {
@@ -214,9 +235,7 @@ impl Router {
                     let (creation, state) = self.db.request_open(mac).await;
                     log::info!("session {fmt} requested reset of unit {mac}");
 
-                    let message = UserMessage { creation, data: Payload::Open };
-                    let json = to_sse_message(&message).unwrap();
-
+                    let json = to_sse_open(&creation).unwrap();
                     if let Ok(receivers) = self.tx.send((mac, json)) {
                         log::trace!("unit {mac} notified {receivers} listeners");
                     } else {
@@ -286,16 +305,14 @@ impl Router {
                     };
 
                     let Ping { addr, flow: data, leak } = flow;
+                    let (creation, state) = self.db.report_ping(flow).await;
                     if leak {
                         log::warn!("unit {addr} reported {data} ticks with a leak");
                     } else {
                         log::info!("unit {addr} reported {data} ticks");
                     }
 
-                    let (creation, state) = self.db.report_ping(flow).await;
-                    let message = UserMessage { creation, data: Payload::Ping { flow: data, leak } };
-                    let json = to_sse_message(&message).unwrap();
-
+                    let json = to_sse_flow(&Flow { end: creation, flow: data.into() }).unwrap();
                     if let Ok(receivers) = self.tx.send((addr, json)) {
                         log::trace!("unit {addr} notified {receivers} listeners");
                     } else {
@@ -322,9 +339,7 @@ impl Router {
                     let creation = self.db.report_bypass(addr).await;
                     log::warn!("unit {addr} reported a manual bypass");
 
-                    let message = UserMessage { creation, data: Payload::Bypass };
-                    let json = to_sse_message(&message).unwrap();
-
+                    let json = to_sse_bypass(&creation).unwrap();
                     if let Ok(receivers) = self.tx.send((addr, json)) {
                         log::trace!("unit {addr} notified {receivers} listeners");
                     } else {
