@@ -1,6 +1,6 @@
 use crate::{database::Database, model::Flow};
 
-use alloc::{boxed::Box, format, string::String, sync::Arc};
+use alloc::{boxed::Box, format, string::String, sync::Arc, vec::Vec};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use cookie::Cookie;
 use core::{convert::Infallible, future::Future, time::Duration};
@@ -32,14 +32,17 @@ fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
     })
 }
 
-fn to_sse<T: serde::Serialize>(prefix: &str, value: &T) -> serde_json::Result<Bytes> {
+fn to_sse<T>(prefix: &str, value: &T) -> serde_json::Result<Bytes>
+where
+    T: serde::Serialize + ?Sized,
+{
     let mut buffer = String::from(prefix).into_bytes();
     serde_json::to_writer(&mut buffer, value)?;
     buffer.extend_from_slice(b"\n\n");
     Ok(Bytes::from(buffer))
 }
 
-fn to_sse_flow(value: &Flow) -> serde_json::Result<Bytes> {
+fn to_sse_flow(value: &[Flow]) -> serde_json::Result<Bytes> {
     to_sse("event: flow\ndata: ", value)
 }
 
@@ -148,14 +151,18 @@ impl Router {
                         return Err(StatusCode::UNAUTHORIZED);
                     };
 
-                    let init = self
+                    let init: Vec<_> = self
                         .db
                         .get_user_metrics_since(mac, secs.as_secs().try_into().unwrap(), since)
                         .await
-                        .map(|flow| Frame::data(to_sse_flow(&flow).unwrap()));
+                        .collect()
+                        .await;
+                    let init = Frame::data(to_sse_flow(&init).unwrap());
 
                     let fmt = sid.simple();
                     log::info!("session {fmt} retrieved metrics for unit {mac} [{state:?}]");
+
+                    // TODO: Migrate to periodically checking once the quantum expires.
 
                     use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
                     let stream = BroadcastStream::new(self.tx.subscribe()).filter_map(move |res| {
@@ -176,7 +183,8 @@ impl Router {
                         })
                     });
 
-                    let body = Either::Right(StreamBody::new(init.chain(stream)));
+                    let stream = tokio_stream::once(init).chain(stream);
+                    let body = Either::Right(StreamBody::new(stream));
                     let mut res = Response::new(body);
                     res.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
                     Ok(res)
@@ -305,18 +313,11 @@ impl Router {
                     };
 
                     let Ping { addr, flow: data, leak } = flow;
-                    let (creation, state) = self.db.report_ping(flow).await;
+                    let (_, state) = self.db.report_ping(flow).await;
                     if leak {
                         log::warn!("unit {addr} reported {data} ticks with a leak");
                     } else {
                         log::info!("unit {addr} reported {data} ticks");
-                    }
-
-                    let json = to_sse_flow(&Flow { end: creation, flow: data.into() }).unwrap();
-                    if let Ok(receivers) = self.tx.send((addr, json)) {
-                        log::trace!("unit {addr} notified {receivers} listeners");
-                    } else {
-                        log::trace!("no active listeners for unit {addr}");
                     }
 
                     let mut res = Response::new(Either::Left(Default::default()));
