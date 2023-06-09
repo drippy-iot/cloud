@@ -1,4 +1,6 @@
 use chrono::Utc;
+use cloud::model::Flow;
+use core::pin::pin;
 use futures_util::StreamExt as _;
 use model::{report::Ping, MacAddress};
 use nanorand::Rng as _;
@@ -100,10 +102,18 @@ async fn database_tests() -> anyhow::Result<()> {
 
     // Aggregate all the timestamps since the start of this test.
     // Everything should thus fall under a single bucket.
-    let count = db.get_user_metrics_since(addr, start, secs).await.count().await;
-    assert_eq!(count, 1);
-    let count = db.get_system_metrics_since(start, secs).await.count().await;
-    assert_eq!(count, 1);
+
+    let mut stream = pin!(db.get_user_metrics_since(addr, start, secs).await);
+    let Flow { end, flow } = stream.next().await.unwrap();
+    assert_eq!(stream.next().await, None);
+    assert!(start < end);
+    assert_eq!(flow, 206.75);
+
+    let mut stream = pin!(db.get_system_metrics_since(start, secs).await);
+    let Flow { end, flow } = stream.next().await.unwrap();
+    assert_eq!(stream.next().await, None);
+    assert!(start < end);
+    assert_eq!(flow, 206.75);
 
     // Aggregate the timestamps according to 60-second buckets. Note that it
     // is unlikely for the test suite to last more than a minute. Here, we
