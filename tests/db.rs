@@ -111,15 +111,15 @@ async fn database_tests() -> anyhow::Result<()> {
 
     let mut stream = pin!(db.get_user_metrics_since(addr, start, secs).await);
     let Flow { end, flow } = stream.next().await.unwrap();
-    assert_eq!(stream.next().await, None);
     assert!(start < end);
     assert_eq!(flow, 206.75);
+    assert_eq!(stream.next().await, None);
 
     let mut stream = pin!(db.get_system_metrics_since(start, secs).await);
     let Flow { end, flow } = stream.next().await.unwrap();
-    assert_eq!(stream.next().await, None);
     assert!(start < end);
     assert_eq!(flow, 206.75);
+    assert_eq!(stream.next().await, None);
 
     // System metrics should account for **all** units.
 
@@ -135,15 +135,41 @@ async fn database_tests() -> anyhow::Result<()> {
 
     let mut stream = pin!(db.get_user_metrics_since(other, start, secs).await);
     let Flow { end, flow } = stream.next().await.unwrap();
-    assert_eq!(stream.next().await, None);
     assert!(start < end);
     assert_eq!(flow, 9.0);
+    assert_eq!(stream.next().await, None);
+    let user_end = end;
 
     let mut stream = pin!(db.get_system_metrics_since(start, secs).await);
     let Flow { end, flow } = stream.next().await.unwrap();
-    assert_eq!(stream.next().await, None);
     assert!(start < end);
     assert_eq!(flow, 178.5);
+    assert_eq!(stream.next().await, None);
+    let system_end = end;
+
+    // Resume metrics from a checkpoint
+
+    let (creation, state) = db.report_ping(Ping { addr, flow: 102, leak: false }).await;
+    assert!(start < creation);
+    assert_eq!(state, None);
+
+    let later = Utc::now() - user_end;
+    let secs = later.to_std().unwrap().as_secs_f64();
+
+    let mut stream = pin!(db.get_user_metrics_since(addr, user_end, secs).await);
+    let Flow { end, flow } = stream.next().await.unwrap();
+    assert!(start < end);
+    assert_eq!(flow, 102.0);
+    assert_eq!(stream.next().await, None);
+
+    let later = Utc::now() - system_end;
+    let secs = later.to_std().unwrap().as_secs_f64();
+
+    let mut stream = pin!(db.get_system_metrics_since(system_end, secs).await);
+    let Flow { end, flow } = stream.next().await.unwrap();
+    assert_eq!(stream.next().await, None);
+    assert!(start < end);
+    assert_eq!(flow, 102.0);
 
     // Aggregate the timestamps according to 60-second buckets. Note that it
     // is unlikely for the test suite to last more than a minute. Here, we
@@ -153,9 +179,6 @@ async fn database_tests() -> anyhow::Result<()> {
     assert_eq!(count, 0);
     let count = db.get_system_metrics_since(start, 60.0).await.count().await;
     assert_eq!(count, 0);
-
-    // TODO: Add tests for multiple units
-    // TODO: Update client SDK
 
     // Test user login flow
     let id = db.create_session(addr).await.unwrap();
