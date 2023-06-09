@@ -151,12 +151,8 @@ impl Router {
                         return Err(StatusCode::UNAUTHORIZED);
                     };
 
-                    let init: Vec<_> = self
-                        .db
-                        .get_user_metrics_since(mac, since, secs.as_secs_f64())
-                        .await
-                        .collect()
-                        .await;
+                    let init: Vec<_> =
+                        self.db.get_user_metrics_since(mac, since, secs.as_secs_f64()).await.collect().await;
                     log::info!("session {} retrieved {} metrics for unit {mac} [{state:?}]", init.len(), sid.simple());
 
                     // Spawn background task that periodically updates the SSE stream
@@ -184,6 +180,75 @@ impl Router {
                                 .await
                                 .collect()
                                 .await;
+                            checkpoint = metrics.last().map(|Flow { end, .. }| end).copied().unwrap();
+
+                            // Notify the SSE stream of the new flow event
+                            let json = to_sse_flow(&metrics).unwrap();
+                            if tx.send(json).is_err() {
+                                // Corresponding SSE stream has been dropped
+                                break;
+                            }
+                        }
+                    });
+
+                    let init = Frame::data(to_sse_flow(&init).unwrap());
+                    let stream = UnboundedReceiverStream::new(rx).map(Frame::data);
+                    let stream = tokio_stream::once(init).chain(stream);
+                    let body = Either::Right(StreamBody::new(stream));
+                    let mut res = Response::new(body);
+                    res.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+                    Ok(res)
+                }
+                "/api/metrics/system" => {
+                    let Some(query) = uri.query() else {
+                        log::error!("query string is absent");
+                        return Err(StatusCode::BAD_REQUEST);
+                    };
+
+                    let mut since = None;
+                    let mut secs = None;
+                    for pair in query.split('&') {
+                        if let Some((key, value)) = pair.split_once('=') {
+                            match key {
+                                "since" => since = value.parse().ok().and_then(NaiveDateTime::from_timestamp_millis),
+                                "secs" => secs = value.parse().ok(),
+                                _ => (),
+                            }
+                        }
+                    }
+
+                    let Some(since) = since.map(|datetime| DateTime::from_utc(datetime, Utc)) else {
+                        log::error!("query did not contain a valid timestamp");
+                        return Err(StatusCode::BAD_REQUEST);
+                    };
+
+                    let secs = secs.map(Duration::from_secs).unwrap_or(POLL_QUANTUM);
+
+                    let init: Vec<_> =
+                        self.db.get_system_metrics_since(since, secs.as_secs_f64()).await.collect().await;
+                    log::info!("retrieved {} system metrics", init.len());
+
+                    // Spawn background task that periodically updates the SSE stream
+                    use tokio_stream::wrappers::UnboundedReceiverStream;
+                    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                    let last = init.last().map(|Flow { end, .. }| end).copied().unwrap();
+                    tokio::spawn(async move {
+                        let mut checkpoint = last;
+                        loop {
+                            use core::pin::pin;
+                            use tokio::time::{sleep_until, Instant};
+                            let sleep = pin!(sleep_until(Instant::now() + secs));
+                            let closed = pin!(tx.closed());
+
+                            use futures_util::future::{select, Either};
+                            if let Either::Right(_) = select(sleep, closed).await {
+                                // Corresponding SSE stream has been dropped
+                                break;
+                            }
+
+                            // Get latest metrics since our last checkpoint
+                            let metrics: Vec<_> =
+                                self.db.get_system_metrics_since(checkpoint, secs.as_secs_f64()).await.collect().await;
                             checkpoint = metrics.last().map(|Flow { end, .. }| end).copied().unwrap();
 
                             // Notify the SSE stream of the new flow event
