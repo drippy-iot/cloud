@@ -300,13 +300,13 @@ impl Router {
                     };
 
                     let (creation, state) = self.db.request_close(mac).await;
-                    log::info!("session {fmt} requested shutdown of unit {mac}");
+                    log::info!("session {fmt} requested shutdown of unit {mac} [{state:?}]");
 
                     let json = to_sse_close(&creation).unwrap();
                     if let Ok(receivers) = self.tx.send((mac, json)) {
-                        log::trace!("unit {mac} notified {receivers} listeners");
+                        log::trace!("unit {mac} [{state:?}] notified {receivers} listeners");
                     } else {
-                        log::trace!("no active listeners for unit {mac}");
+                        log::trace!("no active listeners for unit {mac} [{state:?}]");
                     }
 
                     let mut res = Response::new(Either::Left(Default::default()));
@@ -333,13 +333,13 @@ impl Router {
                     };
 
                     let (creation, state) = self.db.request_open(mac).await;
-                    log::info!("session {fmt} requested reset of unit {mac}");
+                    log::info!("session {fmt} requested reset of unit {mac} [{state:?}]");
 
                     let json = to_sse_open(&creation).unwrap();
                     if let Ok(receivers) = self.tx.send((mac, json)) {
-                        log::trace!("unit {mac} notified {receivers} listeners");
+                        log::trace!("unit {mac} [{state:?}] notified {receivers} listeners");
                     } else {
-                        log::trace!("no active listeners for unit {mac}");
+                        log::trace!("no active listeners for unit {mac} [{state:?}]");
                     }
 
                     let mut res = Response::new(Either::Left(Default::default()));
@@ -385,7 +385,7 @@ impl Router {
                     };
 
                     let state = self.db.register_unit(mac).await;
-                    log::info!("unit {mac} registered");
+                    log::info!("unit {mac} [{state:?}] registered");
 
                     let mut res = Response::new(Either::Left(Default::default()));
                     *res.status_mut() = match state {
@@ -405,11 +405,11 @@ impl Router {
                     };
 
                     let Ping { addr, flow: data, leak } = flow;
-                    let (_, state) = self.db.report_ping(flow).await;
+                    let (creation, state) = self.db.report_ping(flow).await;
                     if leak {
-                        log::warn!("unit {addr} reported {data} ticks with a leak");
+                        log::warn!("unit {addr} [{state:?}] reported {data} ticks with a leak at {creation}");
                     } else {
-                        log::info!("unit {addr} reported {data} ticks");
+                        log::info!("unit {addr} [{state:?}] reported {data} ticks at {creation}");
                     }
 
                     let mut res = Response::new(Either::Left(Default::default()));
@@ -430,7 +430,7 @@ impl Router {
                     };
 
                     let creation = self.db.report_bypass(addr).await;
-                    log::warn!("unit {addr} reported a manual bypass");
+                    log::warn!("unit {addr} reported a manual bypass at {creation}");
 
                     let json = to_sse_bypass(&creation).unwrap();
                     if let Ok(receivers) = self.tx.send((addr, json)) {
