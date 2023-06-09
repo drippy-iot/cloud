@@ -153,36 +153,50 @@ impl Router {
 
                     let init: Vec<_> = self
                         .db
-                        .get_user_metrics_since(mac, secs.as_secs().try_into().unwrap(), since)
+                        .get_user_metrics_since(mac, secs.as_secs_f64(), since)
                         .await
                         .collect()
                         .await;
-                    let init = Frame::data(to_sse_flow(&init).unwrap());
+                    log::info!("session {} retrieved {} metrics for unit {mac} [{state:?}]", init.len(), sid.simple());
 
-                    let fmt = sid.simple();
-                    log::info!("session {fmt} retrieved metrics for unit {mac} [{state:?}]");
+                    // Spawn background task that periodically updates the SSE stream
+                    use tokio_stream::wrappers::UnboundedReceiverStream;
+                    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                    let last = init.last().map(|Flow { end, .. }| end).copied().unwrap();
+                    tokio::task::spawn_local(async move {
+                        let mut checkpoint = last;
+                        loop {
+                            use core::pin::pin;
+                            use tokio::time::{sleep_until, Instant};
+                            let sleep = pin!(sleep_until(Instant::now() + secs));
+                            let closed = pin!(tx.closed());
 
-                    // TODO: Migrate to periodically checking once the quantum expires.
-
-                    use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
-                    let stream = BroadcastStream::new(self.tx.subscribe()).filter_map(move |res| {
-                        use core::future::ready;
-                        let (addr, bytes) = match res {
-                            Ok(pair) => pair,
-                            Err(BroadcastStreamRecvError::Lagged(val)) => {
-                                log::warn!("session {sid} lagged behind {val} messages in the broadcast channel with capacity {}", Self::CAPACITY);
-                                return ready(None);
+                            use futures_util::future::{select, Either};
+                            if let Either::Right(_) = select(sleep, closed).await {
+                                // Corresponding SSE stream has been dropped
+                                break;
                             }
-                        };
-                        ready(if addr == mac {
-                            log::info!("session {sid} received a new data point live");
-                            Some(Frame::data(bytes))
-                        } else {
-                            log::trace!("session {sid} ignored data point from {addr}");
-                            None
-                        })
+
+                            // Get latest metrics since our last checkpoint
+                            let metrics: Vec<_> = self
+                                .db
+                                .get_user_metrics_since(mac, secs.as_secs_f64(), checkpoint)
+                                .await
+                                .collect()
+                                .await;
+                            checkpoint = metrics.last().map(|Flow { end, .. }| end).copied().unwrap();
+
+                            // Notify the SSE stream of the new flow event
+                            let json = to_sse_flow(&metrics).unwrap();
+                            if tx.send(json).is_err() {
+                                // Corresponding SSE stream has been dropped
+                                break;
+                            }
+                        }
                     });
 
+                    let init = Frame::data(to_sse_flow(&init).unwrap());
+                    let stream = UnboundedReceiverStream::new(rx).map(Frame::data);
                     let stream = tokio_stream::once(init).chain(stream);
                     let body = Either::Right(StreamBody::new(stream));
                     let mut res = Response::new(body);

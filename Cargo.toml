@@ -46,7 +46,7 @@ features = ["derive"]
 
 [dependencies.tokio]
 version = "1.28.1"
-features = ["macros", "net", "parking_lot", "rt-multi-thread", "signal"]
+features = ["macros", "net", "parking_lot", "rt-multi-thread", "signal", "time"]
 default-features = false
 
 [dependencies.tokio-postgres]
@@ -55,7 +55,6 @@ features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1"]
 
 [dependencies.tokio-stream]
 version = "0.1"
-features = ["sync"]
 default-features = false
 
 [dependencies.uuid]

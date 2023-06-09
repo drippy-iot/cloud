@@ -131,7 +131,7 @@ impl Database {
     pub async fn get_user_metrics_since(
         &self,
         mac: MacAddress,
-        secs: u32,
+        secs: f64,
         since: DateTime<Utc>,
     ) -> impl Stream<Item = Flow> {
         use futures_util::StreamExt as _;
@@ -140,12 +140,16 @@ impl Database {
             .db
             .query_raw(
                 "WITH _ AS (\
-                    SELECT generate_series($3, NOW(), make_interval(secs => $2)) AS end) EXCEPT SELECT $3\
-                ) SELECT DISTINCT end, COALESCE(AVG(flow) OVER (ORDER BY end RANGE BETWEEN make_interval(secs => $2) PRECEDING AND CURRENT ROW), 0)::REAL AS mean \
+                    SELECT generate_series($3, NOW(), make_interval(secs => $2)) AS endpoint EXCEPT ALL SELECT $3\
+                ) SELECT DISTINCT \
+                    endpoint, \
+                    COALESCE(\
+                        AVG(flow) OVER (ORDER BY endpoint RANGE BETWEEN make_interval(secs => $2) PRECEDING AND CURRENT ROW), 0\
+                    )::DOUBLE PRECISION AS mean \
                     FROM _ LEFT JOIN ping \
-                        ON end - make_interval(secs => $2) <= creation AND creation < end \
-                    WHERE mac = $1 ORDER BY end",
-                [&mac as &dyn ToSql, &secs as _, &since as _],
+                        ON endpoint - make_interval(secs => $2) <= creation AND creation < endpoint \
+                    WHERE mac = $1 ORDER BY endpoint",
+                [&mac as &(dyn ToSql + Sync), &secs as _, &since as _],
             )
             .await
             .unwrap()
