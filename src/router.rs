@@ -47,11 +47,11 @@ fn to_sse_flow(value: &[Flow]) -> serde_json::Result<Bytes> {
 }
 
 fn to_sse_open(value: &DateTime<Utc>) -> serde_json::Result<Bytes> {
-    to_sse("event: open\ndata: ", value)
+    to_sse("event: reset\ndata: ", value)
 }
 
 fn to_sse_close(value: &DateTime<Utc>) -> serde_json::Result<Bytes> {
-    to_sse("event: close\ndata: ", value)
+    to_sse("event: shutdown\ndata: ", value)
 }
 
 fn to_sse_bypass(value: &DateTime<Utc>) -> serde_json::Result<Bytes> {
