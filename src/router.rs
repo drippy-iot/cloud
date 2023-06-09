@@ -153,7 +153,7 @@ impl Router {
 
                     let init: Vec<_> = self
                         .db
-                        .get_user_metrics_since(mac, secs.as_secs_f64(), since)
+                        .get_user_metrics_since(mac, since, secs.as_secs_f64())
                         .await
                         .collect()
                         .await;
@@ -180,7 +180,7 @@ impl Router {
                             // Get latest metrics since our last checkpoint
                             let metrics: Vec<_> = self
                                 .db
-                                .get_user_metrics_since(mac, secs.as_secs_f64(), checkpoint)
+                                .get_user_metrics_since(mac, checkpoint, secs.as_secs_f64())
                                 .await
                                 .collect()
                                 .await;

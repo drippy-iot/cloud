@@ -98,14 +98,14 @@ async fn database_tests() -> anyhow::Result<()> {
     // Everything should thus fall under a single bucket.
     let later = Utc::now() - start;
     let secs = later.to_std().unwrap().as_secs_f64();
-    let count = db.get_user_metrics_since(addr, secs, start).await.count().await;
+    let count = db.get_user_metrics_since(addr, start, secs).await.count().await;
     assert_eq!(count, 1);
 
     // Aggregate the timestamps according to 60-second buckets. Note that it
     // is unlikely for the test suite to last more than a minute. Here, we
     // expect that the quantum has not passed yet, so there are no aggregations
     // that may be returned yet.
-    let count = db.get_user_metrics_since(addr, 60.0, start).await.count().await;
+    let count = db.get_user_metrics_since(addr, start, 60.0).await.count().await;
     assert_eq!(count, 0);
 
     // Test user login flow
