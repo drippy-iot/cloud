@@ -16,11 +16,17 @@ async fn database_tests() -> anyhow::Result<()> {
     let mut rng = nanorand::WyRand::new();
     let [a, b, c, d, e, f, ..] = rng.rand();
     let addr = MacAddress([a, b, c, d, e, f]);
+    let [a, b, c, d, e, f, ..] = rng.rand();
+    let other = MacAddress([a, b, c, d, e, f]);
     let start = Utc::now();
 
     // Register the unit twice just to check if we handle the upsert gracefully
+
     assert_eq!(db.register_unit(addr).await, None); // first registration
     assert_eq!(db.register_unit(addr).await, None); // existing registration
+
+    assert_eq!(db.register_unit(other).await, None); // first registration
+    assert_eq!(db.register_unit(other).await, None); // existing registration
 
     // Ping water flow thrice without leaks; no shutdown requests must occur
     let (creation, state) = db.report_ping(Ping { addr, flow: 50, leak: false }).await;
@@ -115,6 +121,30 @@ async fn database_tests() -> anyhow::Result<()> {
     assert!(start < end);
     assert_eq!(flow, 206.75);
 
+    // System metrics should account for **all** units.
+
+    let (creation, state) = db.report_ping(Ping { addr: other, flow: 4, leak: false }).await;
+    assert!(start < creation);
+    assert_eq!(state, None);
+    let (creation, state) = db.report_ping(Ping { addr: other, flow: 14, leak: false }).await;
+    assert!(start < creation);
+    assert_eq!(state, None);
+
+    let later = Utc::now() - start;
+    let secs = later.to_std().unwrap().as_secs_f64();
+
+    let mut stream = pin!(db.get_user_metrics_since(other, start, secs).await);
+    let Flow { end, flow } = stream.next().await.unwrap();
+    assert_eq!(stream.next().await, None);
+    assert!(start < end);
+    assert_eq!(flow, 9.0);
+
+    let mut stream = pin!(db.get_system_metrics_since(start, secs).await);
+    let Flow { end, flow } = stream.next().await.unwrap();
+    assert_eq!(stream.next().await, None);
+    assert!(start < end);
+    assert_eq!(flow, 178.5);
+
     // Aggregate the timestamps according to 60-second buckets. Note that it
     // is unlikely for the test suite to last more than a minute. Here, we
     // expect that the quantum has not passed yet, so there are no aggregations
@@ -123,6 +153,9 @@ async fn database_tests() -> anyhow::Result<()> {
     assert_eq!(count, 0);
     let count = db.get_system_metrics_since(start, 60.0).await.count().await;
     assert_eq!(count, 0);
+
+    // TODO: Add tests for multiple units
+    // TODO: Update client SDK
 
     // Test user login flow
     let id = db.create_session(addr).await.unwrap();
