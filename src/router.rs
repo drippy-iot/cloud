@@ -163,7 +163,7 @@ impl Router {
                     use tokio_stream::wrappers::UnboundedReceiverStream;
                     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                     let last = init.last().map(|Flow { end, .. }| end).copied().unwrap();
-                    tokio::task::spawn_local(async move {
+                    tokio::spawn(async move {
                         let mut checkpoint = last;
                         loop {
                             use core::pin::pin;
