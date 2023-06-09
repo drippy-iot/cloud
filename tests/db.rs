@@ -1,3 +1,5 @@
+use chrono::Utc;
+use futures_util::StreamExt as _;
 use model::{report::Ping, MacAddress};
 use nanorand::Rng as _;
 
@@ -12,7 +14,7 @@ async fn database_tests() -> anyhow::Result<()> {
     let mut rng = nanorand::WyRand::new();
     let [a, b, c, d, e, f, ..] = rng.rand();
     let addr = MacAddress([a, b, c, d, e, f]);
-    let start = chrono::Utc::now();
+    let start = Utc::now();
 
     // Register the unit twice just to check if we handle the upsert gracefully
     assert_eq!(db.register_unit(addr).await, None); // first registration
@@ -92,9 +94,19 @@ async fn database_tests() -> anyhow::Result<()> {
     assert!(start < creation);
     assert_eq!(state, None);
 
-    // Get all timestamp since the start of these tests
-    let metrics = db.get_metrics_since(addr, start).await.into_boxed_slice();
-    assert_eq!(metrics.len(), 21);
+    // Aggregate all the timestamps since the start of this test.
+    // Everything should thus fall under a single bucket.
+    let later = Utc::now() - start;
+    let secs = later.to_std().unwrap().as_secs_f64();
+    let count = db.get_user_metrics_since(addr, secs, start).await.count().await;
+    assert_eq!(count, 1);
+
+    // Aggregate the timestamps according to 60-second buckets. Note that it
+    // is unlikely for the test suite to last more than a minute. Here, we
+    // expect that the quantum has not passed yet, so there are no aggregations
+    // that may be returned yet.
+    let count = db.get_user_metrics_since(addr, 60.0, start).await.count().await;
+    assert_eq!(count, 0);
 
     // Test user login flow
     let id = db.create_session(addr).await.unwrap();
