@@ -94,11 +94,15 @@ async fn database_tests() -> anyhow::Result<()> {
     assert!(start < creation);
     assert_eq!(state, None);
 
-    // Aggregate all the timestamps since the start of this test.
-    // Everything should thus fall under a single bucket.
+    // Compute elapsed time since test started
     let later = Utc::now() - start;
     let secs = later.to_std().unwrap().as_secs_f64();
+
+    // Aggregate all the timestamps since the start of this test.
+    // Everything should thus fall under a single bucket.
     let count = db.get_user_metrics_since(addr, start, secs).await.count().await;
+    assert_eq!(count, 1);
+    let count = db.get_system_metrics_since(start, secs).await.count().await;
     assert_eq!(count, 1);
 
     // Aggregate the timestamps according to 60-second buckets. Note that it
@@ -106,6 +110,8 @@ async fn database_tests() -> anyhow::Result<()> {
     // expect that the quantum has not passed yet, so there are no aggregations
     // that may be returned yet.
     let count = db.get_user_metrics_since(addr, start, 60.0).await.count().await;
+    assert_eq!(count, 0);
+    let count = db.get_system_metrics_since(start, 60.0).await.count().await;
     assert_eq!(count, 0);
 
     // Test user login flow

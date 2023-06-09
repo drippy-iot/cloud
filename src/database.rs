@@ -160,4 +160,36 @@ impl Database {
                 Flow { end, flow }
             })
     }
+
+    pub async fn get_system_metrics_since(
+        &self,
+        since: DateTime<Utc>,
+        secs: f64,
+    ) -> impl Stream<Item = Flow> {
+        use futures_util::StreamExt as _;
+        use tokio_postgres::types::ToSql;
+        self
+            .db
+            .query_raw(
+                "WITH _ AS (\
+                    SELECT generate_series($1, NOW(), make_interval(secs => $2)) AS endpoint EXCEPT ALL SELECT $1\
+                ) SELECT DISTINCT \
+                    endpoint, \
+                    COALESCE(\
+                        AVG(flow) OVER (ORDER BY endpoint RANGE BETWEEN make_interval(secs => $2) PRECEDING AND CURRENT ROW), 0\
+                    )::DOUBLE PRECISION AS mean \
+                    FROM _ LEFT JOIN ping \
+                        ON endpoint - make_interval(secs => $2) <= creation AND creation < endpoint \
+                    ORDER BY endpoint",
+                [&since as &(dyn ToSql + Sync), &secs as _],
+            )
+            .await
+            .unwrap()
+            .map(|row| {
+                let row = row.unwrap();
+                let end = row.get(0);
+                let flow = row.get(1);
+                Flow { end, flow }
+            })
+    }
 }
