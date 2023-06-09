@@ -17,7 +17,7 @@ use model::{
     report::{Ping, POLL_QUANTUM},
     MacAddress,
 };
-use tokio::sync::broadcast::{channel, Sender};
+use tokio::sync::broadcast::{channel, error::RecvError, Sender};
 use uuid::Uuid;
 
 fn extract_session_id(headers: &HeaderMap) -> Option<Uuid> {
@@ -156,41 +156,52 @@ impl Router {
                     log::info!("session {} retrieved {} metrics for unit {mac} [{state:?}]", init.len(), sid.simple());
 
                     // Spawn background task that periodically updates the SSE stream
-                    use tokio_stream::wrappers::UnboundedReceiverStream;
-                    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                     let last = init.last().map(|Flow { end, .. }| end).copied().unwrap();
+                    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                    let mut broadcast = self.tx.subscribe();
                     tokio::spawn(async move {
                         let mut checkpoint = last;
                         loop {
-                            use core::pin::pin;
                             use tokio::time::{sleep_until, Instant};
-                            let sleep = pin!(sleep_until(Instant::now() + secs));
-                            let closed = pin!(tx.closed());
-
-                            use futures_util::future::{select, Either};
-                            if let Either::Right(_) = select(sleep, closed).await {
-                                // Corresponding SSE stream has been dropped
-                                break;
-                            }
-
-                            // Get latest metrics since our last checkpoint
-                            let metrics: Vec<_> = self
-                                .db
-                                .get_user_metrics_since(mac, checkpoint, secs.as_secs_f64())
-                                .await
-                                .collect()
-                                .await;
-                            checkpoint = metrics.last().map(|Flow { end, .. }| end).copied().unwrap();
+                            let bytes = tokio::select! {
+                                // SSE stream has been closed
+                                _ = tx.closed() => break,
+                                // Get latest metrics since our last checkpoint
+                                _ = sleep_until(Instant::now() + secs) => {
+                                    let flow: Vec<_> = self
+                                        .db
+                                        .get_user_metrics_since(mac, checkpoint, secs.as_secs_f64())
+                                        .await
+                                        .collect()
+                                        .await;
+                                    checkpoint = flow.last().map(|Flow { end, .. }| end).copied().unwrap();
+                                    to_sse_flow(&flow).unwrap()
+                                }
+                                // Receive extra events from the reporter APIs
+                                result = broadcast.recv() => match result {
+                                    Ok((addr, msg)) if addr == mac => msg,
+                                    Err(RecvError::Closed) => unreachable!("broadcast channel closed"),
+                                    Err(RecvError::Lagged(n)) => {
+                                        log::warn!("broadcast receiver for unit {mac} [{state:?}] lagged behind {n} messages");
+                                        continue
+                                    },
+                                    _ => continue,
+                                },
+                            };
 
                             // Notify the SSE stream of the new flow event
-                            let json = to_sse_flow(&metrics).unwrap();
-                            if tx.send(json).is_err() {
-                                // Corresponding SSE stream has been dropped
+                            if tx.send(bytes).is_err() {
+                                // SSE stream has been closed
                                 break;
                             }
+
+                            log::info!("updates to unit {mac} [{state:?}] have been dispatched to the stream");
                         }
+
+                        log::warn!("stream for unit {mac} [{state:?}] has been closed");
                     });
 
+                    use tokio_stream::wrappers::UnboundedReceiverStream;
                     let init = Frame::data(to_sse_flow(&init).unwrap());
                     let stream = UnboundedReceiverStream::new(rx).map(Frame::data);
                     let stream = tokio_stream::once(init).chain(stream);
@@ -229,9 +240,8 @@ impl Router {
                     log::info!("retrieved {} system metrics", init.len());
 
                     // Spawn background task that periodically updates the SSE stream
-                    use tokio_stream::wrappers::UnboundedReceiverStream;
-                    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                     let last = init.last().map(|Flow { end, .. }| end).copied().unwrap();
+                    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                     tokio::spawn(async move {
                         let mut checkpoint = last;
                         loop {
@@ -242,7 +252,6 @@ impl Router {
 
                             use futures_util::future::{select, Either};
                             if let Either::Right(_) = select(sleep, closed).await {
-                                // Corresponding SSE stream has been dropped
                                 break;
                             }
 
@@ -254,12 +263,16 @@ impl Router {
                             // Notify the SSE stream of the new flow event
                             let json = to_sse_flow(&metrics).unwrap();
                             if tx.send(json).is_err() {
-                                // Corresponding SSE stream has been dropped
                                 break;
                             }
+
+                            log::info!("successfully dispatched system flow metrics");
                         }
+
+                        log::warn!("system stream has been closed");
                     });
 
+                    use tokio_stream::wrappers::UnboundedReceiverStream;
                     let init = Frame::data(to_sse_flow(&init).unwrap());
                     let stream = UnboundedReceiverStream::new(rx).map(Frame::data);
                     let stream = tokio_stream::once(init).chain(stream);
