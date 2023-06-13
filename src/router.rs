@@ -464,7 +464,6 @@ impl Router {
                         (Bytes::new(), StatusCode::NOT_FOUND)
                     };
 
-
                     let mut res = Response::new(Either::Left(Full::new(body)));
                     let cookie = HeaderValue::from_static("sid=0; Max-Age=0; Path=/ HttpOnly; SameSite=None; Secure");
                     res.headers_mut().append(SET_COOKIE, cookie);

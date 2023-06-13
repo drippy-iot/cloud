@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
     log::info!("listening to {addr}");
 
     let http = hyper::server::conn::http1::Builder::new();
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_io().build()?;
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_io().enable_time().build()?;
     rt.block_on(async {
         let tcp = tokio::net::TcpListener::from_std(tcp)?;
         let mut stop = core::pin::pin!(tokio::signal::ctrl_c());
