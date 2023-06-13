@@ -193,6 +193,11 @@ async fn database_tests() -> anyhow::Result<()> {
     assert_eq!(state, None);
     assert!(db.get_unit_from_session(uuid::Uuid::nil()).await.is_none());
 
+    // Log the session out
+    let mac = db.delete_session(id).await.unwrap();
+    assert_eq!(mac, addr);
+    assert_eq!(db.delete_session(uuid::Uuid::nil()).await, None);
+
     drop(db);
     handle.await??;
     Ok(())
