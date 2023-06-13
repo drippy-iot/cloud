@@ -156,7 +156,7 @@ impl Router {
                     log::info!("session {} retrieved {} metrics for unit {mac} [{state:?}]", init.len(), sid.simple());
 
                     // Spawn background task that periodically updates the SSE stream
-                    let last = init.last().map(|Flow { end, .. }| end).copied().unwrap();
+                    let last = init.last().map(|Flow { end, .. }| end).copied().unwrap_or_else(Utc::now);
                     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                     let mut broadcast = self.tx.subscribe();
                     tokio::spawn(async move {
@@ -174,7 +174,11 @@ impl Router {
                                         .await
                                         .collect()
                                         .await;
-                                    checkpoint = flow.last().map(|Flow { end, .. }| end).copied().unwrap();
+                                    let Some(last) = flow.last().map(|Flow { end, .. }| end).copied() else {
+                                        log::warn!("no user metrics for {mac} [{state:?}] returned since last checkpoint {checkpoint}");
+                                        continue;
+                                    };
+                                    checkpoint = last;
                                     to_sse_flow(&flow).unwrap()
                                 }
                                 // Receive extra events from the reporter APIs
@@ -240,7 +244,7 @@ impl Router {
                     log::info!("retrieved {} system metrics", init.len());
 
                     // Spawn background task that periodically updates the SSE stream
-                    let last = init.last().map(|Flow { end, .. }| end).copied().unwrap();
+                    let last = init.last().map(|Flow { end, .. }| end).copied().unwrap_or_else(Utc::now);
                     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                     tokio::spawn(async move {
                         let mut checkpoint = last;
@@ -258,7 +262,11 @@ impl Router {
                             // Get latest metrics since our last checkpoint
                             let metrics: Vec<_> =
                                 self.db.get_system_metrics_since(checkpoint, secs.as_secs_f64()).await.collect().await;
-                            checkpoint = metrics.last().map(|Flow { end, .. }| end).copied().unwrap();
+                            let Some(last) = metrics.last().map(|Flow { end, .. }| end).copied() else {
+                                log::warn!("no system metrics returned since last checkpoint {checkpoint}");
+                                continue;
+                            };
+                            checkpoint = last;
 
                             // Notify the SSE stream of the new flow event
                             let json = to_sse_flow(&metrics).unwrap();
