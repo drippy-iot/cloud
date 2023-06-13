@@ -114,6 +114,12 @@ impl Database {
         None
     }
 
+    /// Deletes the session behind the given ID. Returns the [`MacAddress`] of the deleted session.
+    pub async fn delete_session(&self, sid: Uuid) -> Option<MacAddress> {
+        let row = self.db.query_opt("DELETE FROM session WHERE id = $1 RETURNING mac", &[&sid]).await.unwrap()?;
+        Some(row.get(0))
+    }
+
     /// Checks for the existence of a session. Returns the associated MAC address and
     /// its latest request state. If no such sessions exist, we return [`None`].
     pub async fn get_unit_from_session(&self, sid: Uuid) -> Option<(MacAddress, Option<bool>)> {
@@ -136,8 +142,7 @@ impl Database {
     ) -> impl Stream<Item = Flow> {
         use futures_util::StreamExt as _;
         use tokio_postgres::types::ToSql;
-        self
-            .db
+        self.db
             .query_raw(
                 "WITH _ AS (\
                     SELECT generate_series($2, NOW(), make_interval(secs => $3)) AS endpoint EXCEPT ALL SELECT $2\
@@ -163,15 +168,10 @@ impl Database {
             })
     }
 
-    pub async fn get_system_metrics_since(
-        &self,
-        since: DateTime<Utc>,
-        secs: f64,
-    ) -> impl Stream<Item = Flow> {
+    pub async fn get_system_metrics_since(&self, since: DateTime<Utc>, secs: f64) -> impl Stream<Item = Flow> {
         use futures_util::StreamExt as _;
         use tokio_postgres::types::ToSql;
-        self
-            .db
+        self.db
             .query_raw(
                 "WITH _ AS (\
                     SELECT generate_series($1, NOW(), make_interval(secs => $2)) AS endpoint EXCEPT ALL SELECT $1\
