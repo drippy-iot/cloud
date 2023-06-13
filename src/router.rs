@@ -448,6 +448,34 @@ impl Router {
                     Err(StatusCode::NOT_FOUND)
                 }
             },
+            Method::DELETE => match uri.path() {
+                "/auth/logout" => {
+                    let Some(sid) = extract_session_id(&headers) else {
+                        log::error!("absent session");
+                        return Err(StatusCode::UNAUTHORIZED);
+                    };
+
+                    let fmt = sid.simple();
+                    let (body, status) = if let Some(mac) = self.db.delete_session(sid).await {
+                        log::info!("logged out session {fmt}");
+                        (Bytes::copy_from_slice(&mac.0), StatusCode::OK)
+                    } else {
+                        log::error!("cannot log out non-existent session {fmt}");
+                        (Bytes::new(), StatusCode::NOT_FOUND)
+                    };
+
+
+                    let mut res = Response::new(Either::Left(Full::new(body)));
+                    let cookie = HeaderValue::from_static("sid=0; Max-Age=0; HttpOnly; SameSite=None; Secure");
+                    res.headers_mut().append(SET_COOKIE, cookie);
+                    *res.status_mut() = status;
+                    Ok(res)
+                }
+                path => {
+                    log::error!("unexpected request to DELETE {path}");
+                    Err(StatusCode::NOT_FOUND)
+                }
+            },
             method => {
                 log::error!("unexpected {method} method received");
                 Err(StatusCode::METHOD_NOT_ALLOWED)
