@@ -110,15 +110,17 @@ async fn database_tests() -> anyhow::Result<()> {
     // Everything should thus fall under a single bucket.
 
     let mut stream = pin!(db.get_user_metrics_since(addr, start, secs).await);
-    let Flow { end, flow } = stream.next().await.unwrap();
+    let Flow { end, flow, leak } = stream.next().await.unwrap();
     assert!(start < end);
     assert_eq!(flow, 206.75);
+    assert!(leak);
     assert_eq!(stream.next().await, None);
 
     let mut stream = pin!(db.get_system_metrics_since(start, secs).await);
-    let Flow { end, flow } = stream.next().await.unwrap();
+    let Flow { end, flow, leak } = stream.next().await.unwrap();
     assert!(start < end);
     assert_eq!(flow, 206.75);
+    assert!(leak);
     assert_eq!(stream.next().await, None);
 
     // System metrics should account for **all** units.
@@ -134,16 +136,18 @@ async fn database_tests() -> anyhow::Result<()> {
     let secs = later.to_std().unwrap().as_secs_f64();
 
     let mut stream = pin!(db.get_user_metrics_since(other, start, secs).await);
-    let Flow { end, flow } = stream.next().await.unwrap();
+    let Flow { end, flow, leak } = stream.next().await.unwrap();
     assert!(start < end);
     assert_eq!(flow, 9.0);
+    assert!(!leak);
     assert_eq!(stream.next().await, None);
     let user_end = end;
 
     let mut stream = pin!(db.get_system_metrics_since(start, secs).await);
-    let Flow { end, flow } = stream.next().await.unwrap();
+    let Flow { end, flow, leak } = stream.next().await.unwrap();
     assert!(start < end);
     assert_eq!(flow, 178.5);
+    assert!(leak);
     assert_eq!(stream.next().await, None);
     let system_end = end;
 
@@ -157,18 +161,20 @@ async fn database_tests() -> anyhow::Result<()> {
     let secs = later.to_std().unwrap().as_secs_f64();
 
     let mut stream = pin!(db.get_user_metrics_since(addr, user_end, secs).await);
-    let Flow { end, flow } = stream.next().await.unwrap();
+    let Flow { end, flow, leak } = stream.next().await.unwrap();
     assert!(start < end);
     assert_eq!(flow, 102.0);
+    assert!(!leak);
     assert_eq!(stream.next().await, None);
 
     let later = Utc::now() - system_end;
     let secs = later.to_std().unwrap().as_secs_f64();
 
     let mut stream = pin!(db.get_system_metrics_since(system_end, secs).await);
-    let Flow { end, flow } = stream.next().await.unwrap();
+    let Flow { end, flow, leak } = stream.next().await.unwrap();
     assert_eq!(stream.next().await, None);
     assert!(start < end);
+    assert!(!leak);
     assert_eq!(flow, 102.0);
 
     // Aggregate the timestamps according to 60-second buckets. Note that it

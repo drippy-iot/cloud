@@ -143,12 +143,13 @@ impl Database {
                     SELECT generate_series($2, NOW(), make_interval(secs => $3)) AS endpoint EXCEPT ALL SELECT $2\
                 ) SELECT DISTINCT \
                     endpoint, \
-                    COALESCE(\
-                        AVG(flow) OVER (ORDER BY endpoint RANGE BETWEEN make_interval(secs => $3) PRECEDING AND CURRENT ROW), 0\
-                    )::DOUBLE PRECISION AS mean \
+                    COALESCE(AVG(flow) OVER w, 0)::DOUBLE PRECISION AS mean, \
+                    COALESCE(bool_or(leak) OVER w, FALSE) AS leak \
                     FROM _ LEFT JOIN ping \
                         ON endpoint - make_interval(secs => $3) <= creation AND creation < endpoint \
-                    WHERE mac = $1 ORDER BY endpoint",
+                    WHERE mac = $1 \
+                    WINDOW w AS (ORDER BY endpoint RANGE BETWEEN make_interval(secs => $3) PRECEDING AND CURRENT ROW) \
+                    ORDER BY endpoint",
                 [&mac as &(dyn ToSql + Sync), &since as _, &secs as _],
             )
             .await
@@ -157,7 +158,8 @@ impl Database {
                 let row = row.unwrap();
                 let end = row.get(0);
                 let flow = row.get(1);
-                Flow { end, flow }
+                let leak = row.get(2);
+                Flow { end, flow, leak }
             })
     }
 
@@ -175,11 +177,11 @@ impl Database {
                     SELECT generate_series($1, NOW(), make_interval(secs => $2)) AS endpoint EXCEPT ALL SELECT $1\
                 ) SELECT DISTINCT \
                     endpoint, \
-                    COALESCE(\
-                        AVG(flow) OVER (ORDER BY endpoint RANGE BETWEEN make_interval(secs => $2) PRECEDING AND CURRENT ROW), 0\
-                    )::DOUBLE PRECISION AS mean \
+                    COALESCE(AVG(flow) OVER w, 0)::DOUBLE PRECISION AS mean, \
+                    COALESCE(bool_or(leak) OVER w, FALSE) AS leak \
                     FROM _ LEFT JOIN ping \
                         ON endpoint - make_interval(secs => $2) <= creation AND creation < endpoint \
+                    WINDOW w AS (ORDER BY endpoint RANGE BETWEEN make_interval(secs => $2) PRECEDING AND CURRENT ROW) \
                     ORDER BY endpoint",
                 [&since as &(dyn ToSql + Sync), &secs as _],
             )
@@ -189,7 +191,8 @@ impl Database {
                 let row = row.unwrap();
                 let end = row.get(0);
                 let flow = row.get(1);
-                Flow { end, flow }
+                let leak = row.get(2);
+                Flow { end, flow, leak }
             })
     }
 }

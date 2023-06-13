@@ -8,4 +8,6 @@ pub struct Flow {
     pub end: DateTime<Utc>,
     /// Average ticks per second over this interval.
     pub flow: f64,
+    /// Whether a leak happened within this interval.
+    pub leak: bool,
 }
