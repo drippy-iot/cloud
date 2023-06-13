@@ -88,6 +88,7 @@ impl Router {
 
         match method {
             Method::GET => match uri.path() {
+                "/" => Ok(Response::new(Either::Left(Full::default()))),
                 "/auth/session" => {
                     let Some(sid) = extract_session_id(&headers) else {
                         log::error!("absent session");
