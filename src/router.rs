@@ -370,7 +370,7 @@ impl Router {
                     let fmt = uuid.simple();
                     log::info!("created new session {fmt} for unit {mac}");
 
-                    let cookie = format!("sid={fmt}; HttpOnly; SameSite=None; Secure");
+                    let cookie = format!("sid={fmt}; Path=/; HttpOnly; SameSite=None; Secure");
                     let cookie = HeaderValue::from_str(&cookie).unwrap();
 
                     let mut res = Response::new(Either::Left(Default::default()));
@@ -466,7 +466,7 @@ impl Router {
 
 
                     let mut res = Response::new(Either::Left(Full::new(body)));
-                    let cookie = HeaderValue::from_static("sid=0; Max-Age=0; HttpOnly; SameSite=None; Secure");
+                    let cookie = HeaderValue::from_static("sid=0; Max-Age=0; Path=/ HttpOnly; SameSite=None; Secure");
                     res.headers_mut().append(SET_COOKIE, cookie);
                     *res.status_mut() = status;
                     Ok(res)
