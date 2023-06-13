@@ -449,7 +449,7 @@ impl Router {
                 }
             },
             Method::DELETE => match uri.path() {
-                "/auth/logout" => {
+                "/auth/session" => {
                     let Some(sid) = extract_session_id(&headers) else {
                         log::error!("absent session");
                         return Err(StatusCode::UNAUTHORIZED);
