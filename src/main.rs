@@ -7,7 +7,7 @@ use std::{
 
 fn main() -> anyhow::Result<()> {
     let config: tokio_postgres::Config = var("PG_URL")?.parse()?;
-    let tls = native_tls::TlsConnector::new()?;
+    let tls = native_tls::TlsConnector::builder().danger_accept_invalid_certs(true).build()?;
     let tls = postgres_native_tls::MakeTlsConnector::new(tls);
 
     let port: u16 = var("PORT")?.parse()?;
