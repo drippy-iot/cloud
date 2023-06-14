@@ -8,7 +8,7 @@ use futures_util::{FutureExt as _, Stream, StreamExt as _, TryFutureExt as _};
 use http_body_util::{BodyExt as _, Either, Full, StreamBody};
 use hyper::{
     body::{Bytes, Frame, Incoming},
-    header::{CONTENT_TYPE, COOKIE, SET_COOKIE},
+    header::{ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE, COOKIE, SET_COOKIE},
     http::{request::Parts, HeaderValue},
     HeaderMap, Method, Request, Response, StatusCode,
 };
@@ -107,6 +107,7 @@ impl Router {
                     let body = Either::Left(Full::new(Bytes::from(bytes)));
 
                     let mut res = Response::new(body);
+                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
                     *res.status_mut() = match state {
                         // We're accepting some flow.
                         Some(true) => StatusCode::ACCEPTED,
@@ -213,6 +214,7 @@ impl Router {
                     let body = Either::Right(StreamBody::new(stream));
                     let mut res = Response::new(body);
                     res.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
                     Ok(res)
                 }
                 "/api/metrics/system" => {
@@ -288,6 +290,7 @@ impl Router {
                     let body = Either::Right(StreamBody::new(stream));
                     let mut res = Response::new(body);
                     res.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
                     Ok(res)
                 }
                 path => {
@@ -319,6 +322,7 @@ impl Router {
                     }
 
                     let mut res = Response::new(Either::Left(Default::default()));
+                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
                     *res.status_mut() = match state {
                         // We undid the previous command (i.e., nullified).
                         Some(true) => StatusCode::RESET_CONTENT,
@@ -352,6 +356,7 @@ impl Router {
                     }
 
                     let mut res = Response::new(Either::Left(Default::default()));
+                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
                     *res.status_mut() = match state {
                         // We ended up in the same state anyway.
                         Some(true) => StatusCode::NO_CONTENT,
@@ -383,6 +388,7 @@ impl Router {
                     let cookie = HeaderValue::from_str(&cookie).unwrap();
 
                     let mut res = Response::new(Either::Left(Default::default()));
+                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
                     res.headers_mut().insert(SET_COOKIE, cookie);
                     *res.status_mut() = StatusCode::CREATED;
                     Ok(res)
@@ -475,6 +481,7 @@ impl Router {
 
                     let mut res = Response::new(Either::Left(Full::new(body)));
                     let cookie = HeaderValue::from_static("sid=0; Max-Age=0; Path=/ HttpOnly; SameSite=None; Secure");
+                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
                     res.headers_mut().append(SET_COOKIE, cookie);
                     *res.status_mut() = status;
                     Ok(res)
