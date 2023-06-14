@@ -1,4 +1,4 @@
-CREATE EXTENSION pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- A single ESP32 unit uniquely identified by its MAC address.
 CREATE TABLE unit(
