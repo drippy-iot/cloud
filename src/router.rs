@@ -178,14 +178,15 @@ impl Router {
                     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                     let mut broadcast = self.tx.subscribe();
                     tokio::spawn(async move {
+                        use tokio::time::{sleep_until, Instant};
                         let mut checkpoint = last;
+                        let mut now = Instant::now();
                         loop {
-                            use tokio::time::{sleep_until, Instant};
                             let bytes = tokio::select! {
                                 // SSE stream has been closed
                                 _ = tx.closed() => break,
                                 // Get latest metrics since our last checkpoint
-                                _ = sleep_until(Instant::now() + secs) => {
+                                _ = sleep_until(now + secs) => {
                                     let flow: Vec<_> = self
                                         .db
                                         .get_user_metrics_since(mac, checkpoint, secs.as_secs_f64())
@@ -197,6 +198,7 @@ impl Router {
                                         continue;
                                     };
                                     checkpoint = last;
+                                    now = Instant::now();
                                     to_sse_flow(&flow).unwrap()
                                 }
                                 // Receive extra events from the reporter APIs
