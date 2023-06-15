@@ -8,7 +8,10 @@ use futures_util::{FutureExt as _, Stream, StreamExt as _, TryFutureExt as _};
 use http_body_util::{BodyExt as _, Either, Full, StreamBody};
 use hyper::{
     body::{Bytes, Frame, Incoming},
-    header::{ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE, COOKIE, SET_COOKIE, ORIGIN, ACCESS_CONTROL_ALLOW_CREDENTIALS},
+    header::{
+        ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE,
+        COOKIE, ORIGIN, SET_COOKIE,
+    },
     http::{request::Parts, HeaderValue},
     HeaderMap, Method, Request, Response, StatusCode,
 };
@@ -76,7 +79,8 @@ impl Router {
     pub async fn try_handle(
         self,
         req: Request<Incoming>,
-    ) -> Result<Response<Either<Full<Bytes>, impl Stream<Item = Frame<Bytes>>>>, (StatusCode, Option<HeaderValue>)> {
+    ) -> Result<Response<Either<Full<Bytes>, impl Stream<Item = Frame<Bytes>>>>, (StatusCode, Option<HeaderValue>)>
+    {
         let (Parts { uri, method, mut headers, .. }, incoming) = req.into_parts();
         let bytes = match incoming.collect().await {
             Ok(body) => body.to_bytes(),
@@ -112,8 +116,9 @@ impl Router {
                     let body = Either::Left(Full::new(Bytes::from(bytes)));
 
                     let mut res = Response::new(body);
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_str("true").unwrap());
+                    let headers = res.headers_mut();
+                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
                     *res.status_mut() = match state {
                         // We're accepting some flow.
                         Some(true) => StatusCode::ACCEPTED,
@@ -223,10 +228,12 @@ impl Router {
                     let stream = UnboundedReceiverStream::new(rx).map(Frame::data);
                     let stream = tokio_stream::once(init).chain(stream);
                     let body = Either::Right(StreamBody::new(stream));
+
                     let mut res = Response::new(body);
-                    res.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_str("true").unwrap());
+                    let headers = res.headers_mut();
+                    headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
                     Ok(res)
                 }
                 "/api/metrics/system" => {
@@ -306,9 +313,11 @@ impl Router {
                     let stream = tokio_stream::once(init).chain(stream);
                     let body = Either::Right(StreamBody::new(stream));
                     let mut res = Response::new(body);
-                    res.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_str("true").unwrap());
+
+                    let headers = res.headers_mut();
+                    headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
                     Ok(res)
                 }
                 path => {
@@ -349,8 +358,9 @@ impl Router {
                     }
 
                     let mut res = Response::new(Either::Left(Default::default()));
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_str("true").unwrap());
+                    let headers = res.headers_mut();
+                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
                     *res.status_mut() = match state {
                         // We undid the previous command (i.e., nullified).
                         Some(true) => StatusCode::RESET_CONTENT,
@@ -389,8 +399,9 @@ impl Router {
                     }
 
                     let mut res = Response::new(Either::Left(Default::default()));
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_str("true").unwrap());
+                    let headers = res.headers_mut();
+                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
                     *res.status_mut() = match state {
                         // We ended up in the same state anyway.
                         Some(true) => StatusCode::NO_CONTENT,
@@ -427,9 +438,10 @@ impl Router {
                     let cookie = HeaderValue::from_str(&cookie).unwrap();
 
                     let mut res = Response::new(Either::Left(Default::default()));
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_str("true").unwrap());
-                    res.headers_mut().insert(SET_COOKIE, cookie);
+                    let headers = res.headers_mut();
+                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+                    headers.insert(SET_COOKIE, cookie);
                     *res.status_mut() = StatusCode::CREATED;
                     Ok(res)
                 }
@@ -529,10 +541,11 @@ impl Router {
                     };
 
                     let mut res = Response::new(Either::Left(Full::new(body)));
+                    let headers = res.headers_mut();
                     let cookie = HeaderValue::from_static("sid=0; Max-Age=0; Path=/ HttpOnly; SameSite=None; Secure");
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_str("true").unwrap());
-                    res.headers_mut().append(SET_COOKIE, cookie);
+                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+                    headers.append(SET_COOKIE, cookie);
                     *res.status_mut() = status;
                     Ok(res)
                 }
@@ -550,10 +563,24 @@ impl Router {
                     log::error!("absent origin");
                     return Err((StatusCode::BAD_REQUEST, None));
                 };
-                log::info!("preflight check for {}", uri.path());
+
+                let path = uri.path();
+                let allow = match path {
+                    "/api/session" => "GET, POST, DELETE",
+                    "/api/reset" | "/api/shutdown" => "POST",
+                    "/" | "/api/metrics/user" | "/api/metrics/system" => "GET",
+                    _ => {
+                        log::error!("unknown preflight path {path}");
+                        return Err((StatusCode::BAD_REQUEST, Some(origin)));
+                    }
+                };
+
+                log::info!("preflight check for {path}");
                 let mut res = Response::new(Either::Left(Default::default()));
-                res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                res.headers_mut().append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_str("true").unwrap());
+                let headers = res.headers_mut();
+                headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                headers.append(ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static(allow));
+                headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
                 *res.status_mut() = StatusCode::NO_CONTENT;
                 Ok(res)
             }
@@ -578,10 +605,10 @@ impl Router {
                 let mut res = Response::new(Either::Left(Default::default()));
                 if let Some(origin) = origin {
                     log::info!("{origin:?}");
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    res.headers_mut().append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_str("true").unwrap());
+                    let headers = res.headers_mut();
+                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
                 }
-
                 *res.status_mut() = code;
                 res
             })
