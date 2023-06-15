@@ -545,6 +545,18 @@ impl Router {
                     Err((StatusCode::NOT_FOUND, Some(origin)))
                 }
             },
+            Method::OPTIONS => {
+                let Some(origin) = headers.remove(ORIGIN) else {
+                    log::error!("absent origin");
+                    return Err((StatusCode::BAD_REQUEST, None));
+                };
+                log::info!("preflight check for {}", uri.path());
+                let mut res = Response::new(Either::Left(Default::default()));
+                res.headers_mut().append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                res.headers_mut().append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_str("true").unwrap());
+                *res.status_mut() = StatusCode::NO_CONTENT;
+                Ok(res)
+            }
             method => {
                 let Some(origin) = headers.remove(ORIGIN) else {
                     log::error!("absent origin");
