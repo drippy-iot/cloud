@@ -579,9 +579,6 @@ impl Router {
                 res_headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
                 res_headers.append(ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static(allow));
                 res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
-                if let Some(req_headers) = headers.remove(ACCESS_CONTROL_REQUEST_HEADERS) {
-                    res_headers.append(ACCESS_CONTROL_ALLOW_HEADERS, req_headers);
-                }
 
                 *res.status_mut() = StatusCode::NO_CONTENT;
                 Ok(res)
