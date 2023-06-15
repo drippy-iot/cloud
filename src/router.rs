@@ -608,7 +608,6 @@ impl Router {
             .unwrap_or_else(|(code, origin)| {
                 let mut res = Response::new(Either::Left(Default::default()));
                 if let Some(origin) = origin {
-                    log::info!("{origin:?}");
                     let headers = res.headers_mut();
                     headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
                     headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
