@@ -275,12 +275,12 @@ impl Router {
                     let last = init.last().map(|Flow { end, .. }| end).copied().unwrap_or_else(Utc::now);
                     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                     tokio::spawn(async move {
+                        use tokio::time::{sleep_until, Instant};
                         let mut checkpoint = last;
+                        let mut now = Instant::now();
                         loop {
-                            // TODO: move instant
                             use core::pin::pin;
-                            use tokio::time::{sleep_until, Instant};
-                            let sleep = pin!(sleep_until(Instant::now() + secs));
+                            let sleep = pin!(sleep_until(now + secs));
                             let closed = pin!(tx.closed());
 
                             use futures_util::future::{select, Either};
@@ -296,6 +296,7 @@ impl Router {
                                 continue;
                             };
                             checkpoint = last;
+                            now = Instant::now();
 
                             // Notify the SSE stream of the new flow event
                             let json = to_sse_flow(&metrics).unwrap();
