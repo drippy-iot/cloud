@@ -94,19 +94,16 @@ impl Router {
             Method::GET => match uri.path() {
                 "/" => Ok(Response::new(Either::Left(Full::default()))),
                 "/auth/session" => {
-                    let Some(origin) = headers.remove(ORIGIN) else {
-                        log::error!("absent origin");
-                        return Err((StatusCode::BAD_REQUEST, None));
-                    };
+                    let maybe_origin = headers.remove(ORIGIN);
 
                     let Some(sid) = extract_session_id(&headers) else {
                         log::error!("absent session");
-                        return Err((StatusCode::UNAUTHORIZED, Some(origin)));
+                        return Err((StatusCode::UNAUTHORIZED, maybe_origin));
                     };
 
                     let Some((mac, state)) = self.db.get_unit_from_session(sid).await else {
                         log::error!("invalid session {sid}");
-                        return Err((StatusCode::UNAUTHORIZED, Some(origin)));
+                        return Err((StatusCode::UNAUTHORIZED, maybe_origin));
                     };
 
                     let fmt = sid.simple();
@@ -116,9 +113,13 @@ impl Router {
                     let body = Either::Left(Full::new(Bytes::from(bytes)));
 
                     let mut res = Response::new(body);
-                    let headers = res.headers_mut();
-                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+                    let res_headers = res.headers_mut();
+                    res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+
+                    if let Some(origin) = maybe_origin {
+                        res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, origin);
+                    }
+
                     *res.status_mut() = match state {
                         // We're accepting some flow.
                         Some(true) => StatusCode::ACCEPTED,
@@ -130,14 +131,11 @@ impl Router {
                     Ok(res)
                 }
                 "/api/metrics/user" => {
-                    let Some(origin) = headers.remove(ORIGIN) else {
-                        log::error!("absent origin");
-                        return Err((StatusCode::BAD_REQUEST, None));
-                    };
+                    let maybe_origin = headers.remove(ORIGIN);
 
                     let Some(query) = uri.query() else {
                         log::error!("query string is absent");
-                        return Err((StatusCode::BAD_REQUEST, Some(origin)));
+                        return Err((StatusCode::BAD_REQUEST, maybe_origin));
                     };
 
                     let mut since = None;
@@ -154,19 +152,19 @@ impl Router {
 
                     let Some(since) = since.map(|datetime| DateTime::from_utc(datetime, Utc)) else {
                         log::error!("query did not contain a valid timestamp");
-                        return Err((StatusCode::BAD_REQUEST, Some(origin)));
+                        return Err((StatusCode::BAD_REQUEST, maybe_origin));
                     };
 
                     let secs = secs.map(Duration::from_secs).unwrap_or(POLL_QUANTUM);
 
                     let Some(sid) = extract_session_id(&headers) else {
                         log::error!("absent session");
-                        return Err((StatusCode::UNAUTHORIZED, Some(origin)));
+                        return Err((StatusCode::UNAUTHORIZED, maybe_origin));
                     };
 
                     let Some((mac, state)) = self.db.get_unit_from_session(sid).await else {
                         log::error!("invalid session {sid}");
-                        return Err((StatusCode::UNAUTHORIZED, Some(origin)));
+                        return Err((StatusCode::UNAUTHORIZED, maybe_origin));
                     };
 
                     let init: Vec<_> =
@@ -232,21 +230,22 @@ impl Router {
                     let body = Either::Right(StreamBody::new(stream));
 
                     let mut res = Response::new(body);
-                    let headers = res.headers_mut();
-                    headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
-                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+                    let res_headers = res.headers_mut();
+                    res_headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+                    res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+
+                    if let Some(origin) = maybe_origin {
+                        res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, origin);
+                    }
+
                     Ok(res)
                 }
                 "/api/metrics/system" => {
-                    let Some(origin) = headers.remove(ORIGIN) else {
-                        log::error!("absent origin");
-                        return Err((StatusCode::BAD_REQUEST, None));
-                    };
+                    let maybe_origin = headers.remove(ORIGIN);
 
                     let Some(query) = uri.query() else {
                         log::error!("query string is absent");
-                        return Err((StatusCode::BAD_REQUEST, Some(origin)));
+                        return Err((StatusCode::BAD_REQUEST, maybe_origin));
                     };
 
                     let mut since = None;
@@ -263,7 +262,7 @@ impl Router {
 
                     let Some(since) = since.map(|datetime| DateTime::from_utc(datetime, Utc)) else {
                         log::error!("query did not contain a valid timestamp");
-                        return Err((StatusCode::BAD_REQUEST, Some(origin)));
+                        return Err((StatusCode::BAD_REQUEST, maybe_origin));
                     };
 
                     let secs = secs.map(Duration::from_secs).unwrap_or(POLL_QUANTUM);
@@ -278,6 +277,7 @@ impl Router {
                     tokio::spawn(async move {
                         let mut checkpoint = last;
                         loop {
+                            // TODO: move instant
                             use core::pin::pin;
                             use tokio::time::{sleep_until, Instant};
                             let sleep = pin!(sleep_until(Instant::now() + secs));
@@ -316,37 +316,34 @@ impl Router {
                     let body = Either::Right(StreamBody::new(stream));
                     let mut res = Response::new(body);
 
-                    let headers = res.headers_mut();
-                    headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
-                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+                    let res_headers = res.headers_mut();
+                    res_headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+                    res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+
+                    if let Some(origin) = maybe_origin {
+                        res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, origin);
+                    }
+
                     Ok(res)
                 }
                 path => {
-                    let Some(origin) = headers.remove(ORIGIN) else {
-                        log::error!("absent origin");
-                        return Err((StatusCode::BAD_REQUEST, None));
-                    };
                     log::error!("unexpected request to GET {path}");
-                    Err((StatusCode::NOT_FOUND, Some(origin)))
+                    Err((StatusCode::NOT_FOUND, headers.remove(ORIGIN)))
                 }
             },
             Method::POST => match uri.path() {
                 "/api/shutdown" => {
-                    let Some(origin) = headers.remove(ORIGIN) else {
-                        log::error!("absent origin");
-                        return Err((StatusCode::BAD_REQUEST, None));
-                    };
+                    let maybe_origin = headers.remove(ORIGIN);
 
                     let Some(sid) = extract_session_id(&headers) else {
                         log::error!("absent session");
-                        return Err((StatusCode::UNAUTHORIZED, Some(origin)));
+                        return Err((StatusCode::UNAUTHORIZED, maybe_origin));
                     };
 
                     let fmt = sid.simple();
                     let Some((mac, _)) = self.db.get_unit_from_session(sid).await else {
                         log::error!("invalid session {fmt}");
-                        return Err((StatusCode::UNAUTHORIZED, Some(origin)));
+                        return Err((StatusCode::UNAUTHORIZED, maybe_origin));
                     };
 
                     let (creation, state) = self.db.request_close(mac).await;
@@ -360,9 +357,13 @@ impl Router {
                     }
 
                     let mut res = Response::new(Either::Left(Default::default()));
-                    let headers = res.headers_mut();
-                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+                    let res_headers = res.headers_mut();
+                    res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+
+                    if let Some(origin) = maybe_origin {
+                        res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, origin);
+                    }
+
                     *res.status_mut() = match state {
                         // We undid the previous command (i.e., nullified).
                         Some(true) => StatusCode::RESET_CONTENT,
@@ -374,20 +375,17 @@ impl Router {
                     Ok(res)
                 }
                 "/api/reset" => {
-                    let Some(origin) = headers.remove(ORIGIN) else {
-                        log::error!("absent origin");
-                        return Err((StatusCode::BAD_REQUEST, None));
-                    };
+                    let maybe_origin = headers.remove(ORIGIN);
 
                     let Some(sid) = extract_session_id(&headers) else {
                         log::error!("absent session");
-                        return Err((StatusCode::UNAUTHORIZED, Some(origin)));
+                        return Err((StatusCode::UNAUTHORIZED, maybe_origin));
                     };
 
                     let fmt = sid.simple();
                     let Some((mac, _)) = self.db.get_unit_from_session(sid).await else {
                         log::error!("invalid session {fmt}");
-                        return Err((StatusCode::UNAUTHORIZED, Some(origin)));
+                        return Err((StatusCode::UNAUTHORIZED, maybe_origin));
                     };
 
                     let (creation, state) = self.db.request_open(mac).await;
@@ -401,9 +399,13 @@ impl Router {
                     }
 
                     let mut res = Response::new(Either::Left(Default::default()));
-                    let headers = res.headers_mut();
-                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+                    let res_headers = res.headers_mut();
+                    res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+
+                    if let Some(origin) = maybe_origin {
+                        res_headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    }
+
                     *res.status_mut() = match state {
                         // We ended up in the same state anyway.
                         Some(true) => StatusCode::NO_CONTENT,
@@ -415,14 +417,11 @@ impl Router {
                     Ok(res)
                 }
                 "/auth/session" => {
-                    let Some(origin) = headers.remove(ORIGIN) else {
-                        log::error!("absent origin");
-                        return Err((StatusCode::BAD_REQUEST, None))
-                    };
+                    let maybe_origin = headers.remove(ORIGIN);
 
                     if bytes.len() < 6 {
                         log::error!("provided a MAC address that is too short");
-                        return Err((StatusCode::BAD_REQUEST, Some(origin)));
+                        return Err((StatusCode::BAD_REQUEST, maybe_origin));
                     }
 
                     let mut mac = MacAddress([0; 6]);
@@ -430,7 +429,7 @@ impl Router {
 
                     let Some(uuid) = self.db.create_session(mac).await else {
                         log::error!("cannot create session because unit {mac} does not exist yet");
-                        return Err((StatusCode::NOT_FOUND, Some(origin)));
+                        return Err((StatusCode::NOT_FOUND, maybe_origin));
                     };
 
                     let fmt = uuid.simple();
@@ -440,10 +439,14 @@ impl Router {
                     let cookie = HeaderValue::from_str(&cookie).unwrap();
 
                     let mut res = Response::new(Either::Left(Default::default()));
-                    let headers = res.headers_mut();
-                    headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
-                    headers.insert(SET_COOKIE, cookie);
+                    let res_headers = res.headers_mut();
+                    res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+                    res_headers.insert(SET_COOKIE, cookie);
+
+                    if let Some(origin) = maybe_origin {
+                        res_headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    }
+
                     *res.status_mut() = StatusCode::CREATED;
                     Ok(res)
                 }
@@ -513,12 +516,8 @@ impl Router {
                     Ok(res)
                 }
                 path => {
-                    let Some(origin) = headers.remove(ORIGIN) else {
-                        log::error!("absent origin");
-                        return Err((StatusCode::BAD_REQUEST, None));
-                    };
                     log::error!("unexpected request to POST {path}");
-                    Err((StatusCode::NOT_FOUND, Some(origin)))
+                    Err((StatusCode::NOT_FOUND, headers.remove(ORIGIN)))
                 }
             },
             Method::DELETE => match uri.path() {
@@ -552,12 +551,8 @@ impl Router {
                     Ok(res)
                 }
                 path => {
-                    let Some(origin) = headers.remove(ORIGIN) else {
-                        log::error!("absent origin");
-                        return Err((StatusCode::BAD_REQUEST, None));
-                    };
                     log::error!("unexpected request to POST {path}");
-                    Err((StatusCode::NOT_FOUND, Some(origin)))
+                    Err((StatusCode::NOT_FOUND, headers.remove(ORIGIN)))
                 }
             },
             Method::OPTIONS => {
@@ -591,12 +586,8 @@ impl Router {
                 Ok(res)
             }
             method => {
-                let Some(origin) = headers.remove(ORIGIN) else {
-                    log::error!("absent origin");
-                    return Err((StatusCode::BAD_REQUEST, None));
-                };
                 log::error!("unexpected {method} method received");
-                Err((StatusCode::METHOD_NOT_ALLOWED, Some(origin)))
+                Err((StatusCode::METHOD_NOT_ALLOWED, headers.remove(ORIGIN)))
             }
         }
     }
