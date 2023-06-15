@@ -9,8 +9,8 @@ use http_body_util::{BodyExt as _, Either, Full, StreamBody};
 use hyper::{
     body::{Bytes, Frame, Incoming},
     header::{
-        ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE,
-        COOKIE, ORIGIN, SET_COOKIE,
+        ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
+        ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_REQUEST_HEADERS, CONTENT_TYPE, COOKIE, ORIGIN, SET_COOKIE,
     },
     http::{request::Parts, HeaderValue},
     HeaderMap, Method, Request, Response, StatusCode,
@@ -577,10 +577,14 @@ impl Router {
 
                 log::info!("preflight check for {path}");
                 let mut res = Response::new(Either::Left(Default::default()));
-                let headers = res.headers_mut();
-                headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                headers.append(ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static(allow));
-                headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+                let res_headers = res.headers_mut();
+                res_headers.append(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                res_headers.append(ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static(allow));
+                res_headers.append(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+                if let Some(req_headers) = headers.remove(ACCESS_CONTROL_REQUEST_HEADERS) {
+                    res_headers.append(ACCESS_CONTROL_ALLOW_HEADERS, req_headers);
+                }
+
                 *res.status_mut() = StatusCode::NO_CONTENT;
                 Ok(res)
             }
